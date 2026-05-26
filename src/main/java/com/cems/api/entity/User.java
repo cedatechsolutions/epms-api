@@ -2,7 +2,10 @@ package com.cems.api.entity;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -28,6 +31,17 @@ public class User {
     private String middleName;
 
     private String contactNumber;
+
+    private Boolean active = true;
+
+    private Instant lastLoginAt;
+
+    @CreationTimestamp
+    @Column(updatable = false)
+    private Instant createdAt;
+
+    @UpdateTimestamp
+    private Instant updatedAt;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
@@ -94,6 +108,38 @@ public class User {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public boolean isActive() {
+        return active == null || active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+
+    public Instant getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void setLastLoginAt(Instant lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
     }
 
     public Set<Role> getRoles() {

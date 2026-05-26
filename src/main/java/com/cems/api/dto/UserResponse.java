@@ -2,6 +2,7 @@ package com.cems.api.dto;
 
 import com.cems.api.entity.User;
 
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -13,6 +14,10 @@ public class UserResponse {
     private String lastName;
     private String middleName;
     private String contactNumber;
+    private boolean active;
+    private Instant lastLoginAt;
+    private Instant createdAt;
+    private Instant updatedAt;
     private Set<String> roles;
 
     public static UserResponse fromEntity(User user) {
@@ -23,6 +28,10 @@ public class UserResponse {
         response.lastName = user.getLastName();
         response.middleName = user.getMiddleName();
         response.contactNumber = user.getContactNumber();
+        response.active = user.isActive();
+        response.lastLoginAt = user.getLastLoginAt();
+        response.createdAt = user.getCreatedAt();
+        response.updatedAt = user.getUpdatedAt();
         response.roles = user.getRoles().stream()
                 .map(role -> role.getName())
                 .sorted()
@@ -76,6 +85,38 @@ public class UserResponse {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+
+    public Instant getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void setLastLoginAt(Instant lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
     }
 
     public Set<String> getRoles() {

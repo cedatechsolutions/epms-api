@@ -2,6 +2,7 @@ package com.cems.api.dto;
 
 import com.cems.api.entity.User;
 
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -15,6 +16,8 @@ public class AuthResponse {
     private String lastName;
     private String middleName;
     private String contactNumber;
+    private boolean active;
+    private Instant lastLoginAt;
     private Set<String> roles;
 
     public AuthResponse() {
@@ -28,6 +31,8 @@ public class AuthResponse {
             String lastName,
             String middleName,
             String contactNumber,
+            boolean active,
+            Instant lastLoginAt,
             Set<String> roles) {
         this.accessToken = accessToken;
         this.tokenType = tokenType;
@@ -37,6 +42,8 @@ public class AuthResponse {
         this.lastName = lastName;
         this.middleName = middleName;
         this.contactNumber = contactNumber;
+        this.active = active;
+        this.lastLoginAt = lastLoginAt;
         this.roles = roles;
     }
 
@@ -50,6 +57,8 @@ public class AuthResponse {
                 user.getLastName(),
                 user.getMiddleName(),
                 user.getContactNumber(),
+                user.isActive(),
+                user.getLastLoginAt(),
                 user.getRoles().stream()
                         .map(role -> role.getName())
                         .sorted()
@@ -118,6 +127,22 @@ public class AuthResponse {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+
+    public Instant getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void setLastLoginAt(Instant lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
     }
 
     public Set<String> getRoles() {

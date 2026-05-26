@@ -12,6 +12,8 @@ public class AuthRequest {
     @NotBlank
     private String password;
 
+    private String captchaToken;
+
     public AuthRequest() {
     }
 
@@ -29,5 +31,13 @@ public class AuthRequest {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+
+    public String getCaptchaToken() {
+        return captchaToken;
+    }
+
+    public void setCaptchaToken(String captchaToken) {
+        this.captchaToken = captchaToken;
     }
 }

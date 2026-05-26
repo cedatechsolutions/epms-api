@@ -21,10 +21,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Logger logger = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
     private final JwtUtils jwtUtils;
+    private final JwtTokenBlocklistService jwtTokenBlocklistService;
     private final UserDetailsService userDetailsService;
 
-    public JwtAuthenticationFilter(JwtUtils jwtUtils, UserDetailsService userDetailsService) {
+    public JwtAuthenticationFilter(JwtUtils jwtUtils,
+            JwtTokenBlocklistService jwtTokenBlocklistService,
+            UserDetailsService userDetailsService) {
         this.jwtUtils = jwtUtils;
+        this.jwtTokenBlocklistService = jwtTokenBlocklistService;
         this.userDetailsService = userDetailsService;
     }
 
@@ -36,9 +40,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jwt = parseJwt(request);
             if (jwt != null
                     && jwtUtils.validateJwtToken(jwt)
+                    && !jwtTokenBlocklistService.isRevoked(jwt)
                     && SecurityContextHolder.getContext().getAuthentication() == null) {
                 String username = jwtUtils.getUsernameFromJwtToken(jwt);
                 var userDetails = userDetailsService.loadUserByUsername(username);
+                if (!userDetails.isEnabled()) {
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 var authentication = new UsernamePasswordAuthenticationToken(
                         userDetails,
                         null,
