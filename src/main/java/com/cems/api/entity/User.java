@@ -34,6 +34,16 @@ public class User {
 
     private Boolean active = true;
 
+    @Column(nullable = false)
+    private boolean mustChangePassword = false;
+
+    @Column(nullable = false)
+    private int failedAttempts = 0;
+
+    private Instant lockedUntil;
+
+    private Instant deletedAt;
+
     private Instant lastLoginAt;
 
     @CreationTimestamp
@@ -116,6 +126,38 @@ public class User {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public void setMustChangePassword(boolean mustChangePassword) {
+        this.mustChangePassword = mustChangePassword;
+    }
+
+    public int getFailedAttempts() {
+        return failedAttempts;
+    }
+
+    public void setFailedAttempts(int failedAttempts) {
+        this.failedAttempts = failedAttempts;
+    }
+
+    public Instant getLockedUntil() {
+        return lockedUntil;
+    }
+
+    public void setLockedUntil(Instant lockedUntil) {
+        this.lockedUntil = lockedUntil;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 
     public Instant getLastLoginAt() {

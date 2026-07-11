@@ -9,7 +9,7 @@ public class CreateUserRequest {
     @NotBlank
     private String email;
 
-    @NotBlank
+    /** Optional. When blank, the system generates a temporary password and emails it. */
     private String password;
 
     @NotBlank

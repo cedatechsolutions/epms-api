@@ -9,7 +9,9 @@ import java.util.stream.Collectors;
 
 public class AuthResponse {
     private String accessToken;
+    private String refreshToken;
     private String tokenType;
+    private boolean mustChangePassword;
     private String id;
     private String email;
     private String firstName;
@@ -24,7 +26,9 @@ public class AuthResponse {
     }
 
     public AuthResponse(String accessToken,
+            String refreshToken,
             String tokenType,
+            boolean mustChangePassword,
             String id,
             String email,
             String firstName,
@@ -35,7 +39,9 @@ public class AuthResponse {
             Instant lastLoginAt,
             Set<String> roles) {
         this.accessToken = accessToken;
+        this.refreshToken = refreshToken;
         this.tokenType = tokenType;
+        this.mustChangePassword = mustChangePassword;
         this.id = id;
         this.email = email;
         this.firstName = firstName;
@@ -47,10 +53,12 @@ public class AuthResponse {
         this.roles = roles;
     }
 
-    public static AuthResponse fromUser(User user, String accessToken, String tokenType) {
+    public static AuthResponse fromUser(User user, String accessToken, String refreshToken, String tokenType) {
         return new AuthResponse(
                 accessToken,
+                refreshToken,
                 tokenType,
+                user.isMustChangePassword(),
                 user.getId(),
                 user.getEmail(),
                 user.getFirstName(),
@@ -73,12 +81,28 @@ public class AuthResponse {
         this.accessToken = accessToken;
     }
 
+    public String getRefreshToken() {
+        return refreshToken;
+    }
+
+    public void setRefreshToken(String refreshToken) {
+        this.refreshToken = refreshToken;
+    }
+
     public String getTokenType() {
         return tokenType;
     }
 
     public void setTokenType(String tokenType) {
         this.tokenType = tokenType;
+    }
+
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public void setMustChangePassword(boolean mustChangePassword) {
+        this.mustChangePassword = mustChangePassword;
     }
 
     public String getId() {

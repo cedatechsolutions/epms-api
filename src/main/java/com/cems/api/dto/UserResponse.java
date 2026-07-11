@@ -15,6 +15,7 @@ public class UserResponse {
     private String middleName;
     private String contactNumber;
     private boolean active;
+    private boolean mustChangePassword;
     private Instant lastLoginAt;
     private Instant createdAt;
     private Instant updatedAt;
@@ -29,6 +30,7 @@ public class UserResponse {
         response.middleName = user.getMiddleName();
         response.contactNumber = user.getContactNumber();
         response.active = user.isActive();
+        response.mustChangePassword = user.isMustChangePassword();
         response.lastLoginAt = user.getLastLoginAt();
         response.createdAt = user.getCreatedAt();
         response.updatedAt = user.getUpdatedAt();
@@ -93,6 +95,14 @@ public class UserResponse {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public void setMustChangePassword(boolean mustChangePassword) {
+        this.mustChangePassword = mustChangePassword;
     }
 
     public Instant getLastLoginAt() {

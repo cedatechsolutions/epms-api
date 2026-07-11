@@ -1,57 +1,48 @@
 package com.cems.api.dto;
 
-import java.time.Instant;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import org.springframework.http.HttpStatus;
+
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.http.HttpStatus;
-
+/**
+ * Standard error envelope (spec §5.1): {@code {"error": {"code", "message", "fields"}}}.
+ * {@code fields} is a per-field list of messages for validation failures and is omitted
+ * when absent. The HTTP status line carries the numeric status (401/403/404/409/422/423).
+ */
 public class ApiErrorResponse {
 
-    private final Instant timestamp;
-    private final int status;
-    private final String error;
-    private final String message;
-    private final String path;
-    private final Map<String, List<String>> errors;
+    private final ErrorBody error;
 
-    public ApiErrorResponse(HttpStatus status, String message, String path) {
-        this(status, message, path, null);
+    public ApiErrorResponse(String code, String message, Map<String, List<String>> fields) {
+        this.error = new ErrorBody(code, message, fields);
     }
 
-    public ApiErrorResponse(HttpStatus status,
-            String message,
-            String path,
-            Map<String, List<String>> errors) {
-        this.timestamp = Instant.now();
-        this.status = status.value();
-        this.error = status.getReasonPhrase();
-        this.message = message;
-        this.path = path;
-        this.errors = errors;
+    public static ApiErrorResponse of(HttpStatus status, String message, Map<String, List<String>> fields) {
+        return new ApiErrorResponse(codeFor(status), message, fields);
     }
 
-    public Instant getTimestamp() {
-        return timestamp;
-    }
-
-    public int getStatus() {
-        return status;
-    }
-
-    public String getError() {
+    public ErrorBody getError() {
         return error;
     }
 
-    public String getMessage() {
-        return message;
+    /** Stable, machine-readable code derived from the HTTP status. */
+    private static String codeFor(HttpStatus status) {
+        return switch (status) {
+            case UNAUTHORIZED -> "UNAUTHORIZED";
+            case FORBIDDEN -> "FORBIDDEN";
+            case NOT_FOUND -> "NOT_FOUND";
+            case CONFLICT -> "CONFLICT";
+            case UNPROCESSABLE_ENTITY -> "VALIDATION_FAILED";
+            case LOCKED -> "LOCKED";
+            case TOO_MANY_REQUESTS -> "RATE_LIMITED";
+            case SERVICE_UNAVAILABLE -> "SERVICE_UNAVAILABLE";
+            default -> status.is5xxServerError() ? "INTERNAL_ERROR" : "BAD_REQUEST";
+        };
     }
 
-    public String getPath() {
-        return path;
-    }
-
-    public Map<String, List<String>> getErrors() {
-        return errors;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ErrorBody(String code, String message, Map<String, List<String>> fields) {
     }
 }

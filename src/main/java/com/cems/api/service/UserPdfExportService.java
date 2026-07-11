@@ -1,6 +1,7 @@
 package com.cems.api.service;
 
 import com.cems.api.dto.UserResponse;
+import com.cems.api.security.RoleName;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -231,13 +232,11 @@ public class UserPdfExportService {
 
     private String formatRole(UserResponse user) {
         Set<String> roles = user.getRoles() == null ? Set.of() : user.getRoles();
-        if (roles.contains(UserManagementService.ROLE_SUPER_ADMIN)) {
-            return "Super Admin";
-        }
-        if (roles.contains(UserManagementService.ROLE_ADMIN)) {
-            return "Admin";
-        }
-        return "User";
+        return roles.stream()
+                .map(RoleName::displayNameForCode)
+                .sorted()
+                .findFirst()
+                .orElse("-");
     }
 
     private String formatInstant(Instant instant) {

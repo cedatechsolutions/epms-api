@@ -4,8 +4,12 @@ import com.cems.api.dto.CreateUserRequest;
 import com.cems.api.dto.UserListQuery;
 import com.cems.api.dto.UpdateUserRequest;
 import com.cems.api.dto.UserResponse;
+import com.cems.api.dto.UserStatsResponse;
 import com.cems.api.entity.Role;
 import com.cems.api.entity.User;
+import com.cems.api.exception.ConflictException;
+import com.cems.api.security.RoleName;
+import com.cems.api.security.TokenHasher;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
@@ -19,30 +23,37 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
 @Service
 public class UserManagementService {
 
-    public static final String ROLE_SUPER_ADMIN = "ROLE_SUPER_ADMIN";
-    public static final String ROLE_ADMIN = "ROLE_ADMIN";
-    public static final String ROLE_USER = "ROLE_USER";
-
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ActivityLogService activityLogService;
+    private final EmailService emailService;
+    private final TokenHasher tokenHasher;
 
     public UserManagementService(UserRepository userRepository,
             RoleRepository roleRepository,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder,
+            ActivityLogService activityLogService,
+            EmailService emailService,
+            TokenHasher tokenHasher) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.activityLogService = activityLogService;
+        this.emailService = emailService;
+        this.tokenHasher = tokenHasher;
     }
 
     public UserResponse getCurrentUser(String email) {
@@ -52,15 +63,19 @@ public class UserManagementService {
     }
 
     public UserResponse getUserById(String userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new NoSuchElementException("User not found."));
-        return UserResponse.fromEntity(user);
+        return UserResponse.fromEntity(findActiveUser(userId));
     }
 
     public List<UserResponse> getAllUsers() {
-        return userRepository.findAll(Sort.by("lastName", "firstName", "email")).stream()
+        return userRepository.findByDeletedAtIsNull(Sort.by("lastName", "firstName", "email")).stream()
                 .map(UserResponse::fromEntity)
                 .toList();
+    }
+
+    public UserStatsResponse getUserStats() {
+        long total = userRepository.countByDeletedAtIsNull();
+        long active = userRepository.countByActiveAndDeletedAtIsNull(true);
+        return new UserStatsResponse(total, active, total - active);
     }
 
     public Page<UserResponse> getUsers(UserListQuery query) {
@@ -83,7 +98,7 @@ public class UserManagementService {
 
     public UserResponse createManagedUser(CreateUserRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("Email is already in use.");
+            throw new ConflictException("Email is already in use.");
         }
 
         Role role = resolveManageableRole(request.getRole());
@@ -96,17 +111,37 @@ public class UserManagementService {
                 request.getMiddleName(),
                 request.getContactNumber());
         user.setActive(resolveManagedStatus(request.getStatus(), true));
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRoles(new HashSet<>(Set.of(role)));
 
-        return UserResponse.fromEntity(userRepository.save(user));
+        // Admin may set a password, or leave it blank to email a temporary one that must be
+        // changed on first login (spec Module 1 §4).
+        boolean adminSetPassword = request.getPassword() != null && !request.getPassword().isBlank();
+        String rawPassword = adminSetPassword ? request.getPassword() : generateTemporaryPassword();
+        if (adminSetPassword && rawPassword.length() < 8) {
+            throw new IllegalArgumentException("Password must be at least 8 characters.");
+        }
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        user.setMustChangePassword(!adminSetPassword);
+
+        User saved = userRepository.save(user);
+        if (!adminSetPassword) {
+            emailService.sendTemporaryPasswordEmail(saved.getEmail(), rawPassword);
+        }
+        activityLogService.record("user.created", "user", saved.getId(),
+                Map.of("email", saved.getEmail(), "role", role.getName()));
+        return UserResponse.fromEntity(saved);
+    }
+
+    /** 12-character URL-safe random temporary password (satisfies the 8-char minimum). */
+    private String generateTemporaryPassword() {
+        return tokenHasher.generateRawToken().substring(0, 12);
     }
 
     public UserResponse updateManagedUser(String userId, UpdateUserRequest request) {
         User user = findManageableUser(userId);
 
         if (!user.getEmail().equalsIgnoreCase(request.getEmail()) && userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("Email is already in use.");
+            throw new ConflictException("Email is already in use.");
         }
 
         Role role = resolveManageableRole(request.getRole());
@@ -124,13 +159,19 @@ public class UserManagementService {
 
         user.setActive(resolveManagedStatus(request.getStatus(), user.isActive()));
         user.setRoles(new HashSet<>(Set.of(role)));
-        return UserResponse.fromEntity(userRepository.save(user));
+        User saved = userRepository.save(user);
+        activityLogService.record("user.updated", "user", saved.getId(),
+                Map.of("email", saved.getEmail(), "role", role.getName()));
+        return UserResponse.fromEntity(saved);
     }
 
     public UserResponse updateManagedUserStatus(String userId, String requestedStatus) {
         User user = findManageableUser(userId);
         user.setActive(resolveManagedStatus(requestedStatus, user.isActive()));
-        return UserResponse.fromEntity(userRepository.save(user));
+        User saved = userRepository.save(user);
+        activityLogService.record("user.status_changed", "user", saved.getId(),
+                Map.of("status", saved.isActive() ? "active" : "inactive"));
+        return UserResponse.fromEntity(saved);
     }
 
     public void resetManagedUserPassword(String userId, String password, String passwordConfirmation) {
@@ -138,11 +179,21 @@ public class UserManagementService {
         validateManagedPassword(password, passwordConfirmation);
         user.setPassword(passwordEncoder.encode(password));
         userRepository.save(user);
+        activityLogService.record("user.password_reset", "user", user.getId(), null);
     }
 
+    /**
+     * Soft-deletes the user (spec cross-cutting rule 3): marks {@code deleted_at} and
+     * deactivates, preserving referenced audit records. Hard deletion would violate the
+     * {@code activity_logs.user_id} foreign key.
+     */
     public void deleteManagedUser(String userId) {
         User user = findManageableUser(userId);
-        userRepository.delete(user);
+        user.setDeletedAt(Instant.now());
+        user.setActive(false);
+        userRepository.save(user);
+        activityLogService.record("user.deleted", "user", user.getId(),
+                Map.of("email", user.getEmail()));
     }
 
     private void applyProfile(User user,
@@ -159,23 +210,26 @@ public class UserManagementService {
     }
 
     private User findManageableUser(String userId) {
+        return findActiveUser(userId);
+    }
+
+    private User findActiveUser(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new NoSuchElementException("User not found."));
-
-        if (hasRole(user, ROLE_SUPER_ADMIN)) {
-            throw new IllegalArgumentException("Super admin accounts cannot be managed through this endpoint.");
+        if (user.getDeletedAt() != null) {
+            throw new NoSuchElementException("User not found.");
         }
-
         return user;
     }
 
     private Role resolveManageableRole(String requestedRole) {
-        String normalizedRole = requestedRole.trim().toUpperCase(Locale.ROOT);
-        return switch (normalizedRole) {
-            case "ADMIN" -> findRole(ROLE_ADMIN);
-            case "USER" -> findRole(ROLE_USER);
-            default -> throw new IllegalArgumentException("Role must be either ADMIN or USER.");
-        };
+        if (requestedRole == null || requestedRole.isBlank()) {
+            throw new IllegalArgumentException("Role is required.");
+        }
+        if (!RoleName.isValidCode(requestedRole)) {
+            throw new IllegalArgumentException("Role must be one of: " + RoleName.codesCsv() + ".");
+        }
+        return findRole(RoleName.fromCode(requestedRole).code());
     }
 
     private Role findRole(String roleName) {
@@ -214,14 +268,12 @@ public class UserManagementService {
         }
     }
 
-    private boolean hasRole(User user, String roleName) {
-        return user.getRoles().stream()
-                .anyMatch(role -> roleName.equals(role.getName()));
-    }
-
     private Specification<User> buildUserSpecification(UserListQuery query) {
         return (root, criteriaQuery, criteriaBuilder) -> {
             List<Predicate> predicates = new ArrayList<>();
+
+            // Exclude soft-deleted users from all list results (cross-cutting rule 3).
+            predicates.add(criteriaBuilder.isNull(root.get("deletedAt")));
 
             if (query.getSearch() != null && !query.getSearch().isBlank()) {
                 String search = "%" + query.getSearch().trim().toLowerCase(Locale.ROOT) + "%";
@@ -243,15 +295,12 @@ public class UserManagementService {
             }
 
             if (query.getRole() != null && !query.getRole().isBlank()) {
+                String requestedRole = query.getRole().trim();
+                if (!RoleName.isValidCode(requestedRole)) {
+                    throw new IllegalArgumentException("Role filter must be one of: " + RoleName.codesCsv() + ".");
+                }
                 Join<User, Role> roleJoin = root.join("roles", JoinType.INNER);
-                String normalizedRole = query.getRole().trim().toUpperCase(Locale.ROOT);
-                Predicate rolePredicate = switch (normalizedRole) {
-                    case "ADMIN" -> roleJoin.get("name").in(ROLE_ADMIN, ROLE_SUPER_ADMIN);
-                    case "SUPER_ADMIN" -> criteriaBuilder.equal(roleJoin.get("name"), ROLE_SUPER_ADMIN);
-                    case "USER" -> criteriaBuilder.equal(roleJoin.get("name"), ROLE_USER);
-                    default -> throw new IllegalArgumentException("Role filter must be ADMIN, SUPER_ADMIN, or USER.");
-                };
-                predicates.add(rolePredicate);
+                predicates.add(criteriaBuilder.equal(roleJoin.get("name"), RoleName.fromCode(requestedRole).code()));
                 criteriaQuery.distinct(true);
             }
 

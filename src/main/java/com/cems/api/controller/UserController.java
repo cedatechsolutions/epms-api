@@ -8,6 +8,7 @@ import com.cems.api.dto.UpdateUserRequest;
 import com.cems.api.dto.UpdateUserStatusRequest;
 import com.cems.api.dto.UserListQuery;
 import com.cems.api.dto.UserResponse;
+import com.cems.api.dto.UserStatsResponse;
 import com.cems.api.service.UserManagementService;
 import com.cems.api.service.UserPdfExportService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -54,7 +55,7 @@ public class UserController {
         return ResponseEntity.ok(userManagementService.getCurrentUser(authentication.getName()));
     }
 
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @GetMapping
     public ResponseEntity<PaginatedResponse<UserResponse>> getAllUsers(UserListQuery query,
             HttpServletRequest request) {
@@ -64,7 +65,13 @@ public class UserController {
     }
 
 
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
+    @GetMapping("/stats")
+    public ResponseEntity<UserStatsResponse> getUserStats() {
+        return ResponseEntity.ok(userManagementService.getUserStats());
+    }
+
+    @PreAuthorize("@permissions.canManageUsers()")
     @GetMapping(value = "/print", produces = "application/pdf")
     public ResponseEntity<StreamingResponseBody> printUsers() {
         byte[] pdf = userPdfExportService.buildUsersPdf(userManagementService.getAllUsers());
@@ -80,33 +87,33 @@ public class UserController {
                 .body(responseBody);
     }
 
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @GetMapping("/{userId}")
     public ResponseEntity<UserResponse> getUserById(@PathVariable String userId) {
         return ResponseEntity.ok(userManagementService.getUserById(userId));
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @PostMapping
     public ResponseEntity<UserResponse> createUser(@Valid @RequestBody CreateUserRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(userManagementService.createManagedUser(request));
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @PutMapping("/{userId}")
     public ResponseEntity<UserResponse> updateUser(@PathVariable String userId, @Valid @RequestBody UpdateUserRequest request) {
         return ResponseEntity.ok(userManagementService.updateManagedUser(userId, request));
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @PatchMapping("/{userId}/status")
     public ResponseEntity<UserResponse> updateUserStatus(@PathVariable String userId,
             @Valid @RequestBody UpdateUserStatusRequest request) {
         return ResponseEntity.ok(userManagementService.updateManagedUserStatus(userId, request.getStatus()));
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @PatchMapping("/{userId}/password")
     public ResponseEntity<ApiResponse> resetUserPassword(@PathVariable String userId,
             @Valid @RequestBody ResetUserPasswordRequest request) {
@@ -117,7 +124,7 @@ public class UserController {
         return ResponseEntity.ok(new ApiResponse("Password reset successfully."));
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@permissions.canManageUsers()")
     @DeleteMapping("/{userId}")
     public ResponseEntity<ApiResponse> deleteUser(@PathVariable String userId) {
         userManagementService.deleteManagedUser(userId);

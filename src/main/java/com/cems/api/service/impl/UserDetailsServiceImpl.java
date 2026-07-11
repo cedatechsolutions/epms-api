@@ -3,6 +3,7 @@ package com.cems.api.service.impl;
 import com.cems.api.entity.Role;
 import com.cems.api.entity.User;
 import com.cems.api.repository.UserRepository;
+import com.cems.api.security.RoleName;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -27,6 +28,10 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         User user = userRepository.findByEmail(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + username));
 
+        if (user.getDeletedAt() != null) {
+            throw new UsernameNotFoundException("User not found with email: " + username);
+        }
+
         return org.springframework.security.core.userdetails.User.builder()
                 .username(user.getEmail())
                 .password(user.getPassword())
@@ -41,6 +46,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
     private Collection<? extends GrantedAuthority> getAuthorities(User user) {
         return user.getRoles().stream()
                 .map(Role::getName)
+                .map(RoleName::authorityForCode)
                 .map(SimpleGrantedAuthority::new)
                 .collect(Collectors.toSet());
     }

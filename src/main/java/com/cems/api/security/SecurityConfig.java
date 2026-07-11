@@ -1,7 +1,6 @@
 package com.cems.api.security;
 
 import java.io.IOException;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 
@@ -114,14 +113,10 @@ public class SecurityConfig {
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        response.getWriter().write("""
-                {"timestamp":"%s","status":%d,"error":"%s","message":"%s","path":"%s","errors":null}
-                """.formatted(
-                escape(Instant.now().toString()),
-                status.value(),
-                escape(status.getReasonPhrase()),
-                escape(message),
-                escape(request.getRequestURI())).trim());
+        // Matches the standard error envelope (spec §5.1): {"error":{"code","message"}}.
+        String code = status == HttpStatus.UNAUTHORIZED ? "UNAUTHORIZED" : "FORBIDDEN";
+        response.getWriter().write(
+                "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}".formatted(code, escape(message)));
     }
 
     private String escape(String value) {

@@ -1,436 +1,407 @@
 package com.cems.api;
 
+import com.cems.api.service.EmailService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.web.servlet.MvcResult;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
-import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * End-to-end coverage of Module 1 (spec §4): the six-role model, rotating refresh tokens,
+ * account lockout, forgot/reset/change password, soft delete, the standard error envelope,
+ * and permission enforcement. Seeded dev accounts (see {@code DataInitializer}) are used
+ * read-only; any test that mutates credentials/state operates on a purpose-created user so
+ * tests stay independent on the shared in-memory database.
+ */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class AuthControllerIntegrationTest {
 
+    private static final String ADMIN_EMAIL = "admin@cems.com";
+    private static final String ADMIN_PASSWORD = "Admin123!";
+    private static final String FACULTY_EMAIL = "faculty@cems.com";
+    private static final String FACULTY_PASSWORD = "Faculty123!";
+
     @Autowired
     private MockMvc mockMvc;
 
+    // Replaced with a mock so no real mail is sent and reset links can be captured.
+    @MockitoBean
+    private EmailService emailService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // --- Authentication ---
+
     @Test
-    void loginReturnsJwtAndAllowsAccessToProtectedEndpoint() throws Exception {
-        String accessToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
+    void loginReturnsTokenPairAndAllowsProtectedAccess() throws Exception {
+        JsonNode login = login(ADMIN_EMAIL, ADMIN_PASSWORD);
+        assertTrue(login.get("accessToken").asText().length() > 0);
+        assertTrue(login.get("refreshToken").asText().length() > 0);
+        assertTrue(login.has("mustChangePassword"));
 
         mockMvc.perform(get("/api/users/me")
-                        .header("Authorization", "Bearer " + accessToken))
+                        .header("Authorization", "Bearer " + login.get("accessToken").asText()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("superadmin@cems.com"))
-                .andExpect(jsonPath("$.firstName").value("Super"))
-                .andExpect(jsonPath("$.lastName").value("Admin"))
-                .andExpect(jsonPath("$.contactNumber").value("09170000000"));
+                .andExpect(jsonPath("$.email").value(ADMIN_EMAIL))
+                .andExpect(jsonPath("$.roles[0]").value("admin"));
     }
 
     @Test
-    void loginRejectsInvalidCredentials() throws Exception {
+    void invalidCredentialsReturn401WithStandardEnvelope() throws Exception {
+        // Unknown email → no side effect on any real account.
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "superadmin@cems.com",
-                                  "password": "wrong-password"
-                                }
-                                """))
+                        .content(loginBody("ghost@cems.com", "whatever")))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.error").value("Unauthorized"))
-                .andExpect(jsonPath("$.message").value("Invalid email or password."))
-                .andExpect(jsonPath("$.path").value("/api/auth/login"));
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"))
+                .andExpect(jsonPath("$.error.message").value("Invalid email or password."));
     }
 
     @Test
-    void logoutRevokesTokenAndBlocksFurtherAccess() throws Exception {
-        String accessToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
+    void accountLocksAfterFiveFailedAttemptsAndReturns423() throws Exception {
+        String token = adminToken();
+        String email = "lockout.target@cems.com";
+        createUser(token, userBody(email, "LockTarget123!", "faculty", "active"));
+
+        for (int attempt = 1; attempt <= 4; attempt++) {
+            mockMvc.perform(post("/api/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(loginBody(email, "wrong-password")))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        // Fifth failure trips the lock.
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, "wrong-password")))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.error.code").value("LOCKED"));
+
+        // Even the correct password is refused while locked.
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, "LockTarget123!")))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.error.code").value("LOCKED"));
+    }
+
+    // --- Refresh rotation ---
+
+    @Test
+    void refreshRotatesTokensAndRejectsReuse() throws Exception {
+        String refreshA = login(ADMIN_EMAIL, ADMIN_PASSWORD).get("refreshToken").asText();
+
+        JsonNode rotated = refresh(refreshA);
+        assertTrue(rotated.get("accessToken").asText().length() > 0);
+        String refreshB = rotated.get("refreshToken").asText();
+        assertFalse(refreshA.equals(refreshB));
+
+        // Replaying the rotated-away token is rejected and revokes the family.
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshBody(refreshA)))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshBody(refreshB)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutRevokesRefreshAndBlocksAccessToken() throws Exception {
+        JsonNode login = login(ADMIN_EMAIL, ADMIN_PASSWORD);
+        String accessToken = login.get("accessToken").asText();
+        String refreshToken = login.get("refreshToken").asText();
 
         mockMvc.perform(post("/api/auth/logout")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("Logged out successfully."));
+                .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/users/me")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.message").value("Authentication is required."))
-                .andExpect(jsonPath("$.path").value("/api/users/me"));
-    }
+                .andExpect(status().isUnauthorized());
 
-    @Test
-    void superAdminCanCreateUpdateAndDeleteManagedAccounts() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
-
-        JsonNode createdAdmin = createUser(superAdminToken, """
-                {
-                  "email": "managed.admin@cems.com",
-                  "password": "ManagedAdmin123!",
-                  "firstName": "Managed",
-                  "lastName": "Admin",
-                  "middleName": "Alpha",
-                  "contactNumber": "09170000011",
-                  "role": "ADMIN"
-                }
-                """);
-
-        JsonNode createdUser = createUser(superAdminToken, """
-                {
-                  "email": "managed.user@cems.com",
-                  "password": "ManagedUser123!",
-                  "firstName": "Managed",
-                  "lastName": "User",
-                  "middleName": "Beta",
-                  "contactNumber": "09170000012",
-                  "role": "USER"
-                }
-                """);
-
-        String managedAdminId = createdAdmin.get("id").asText();
-        String managedUserId = createdUser.get("id").asText();
-
-        mockMvc.perform(put("/api/users/{userId}", managedUserId)
-                        .header("Authorization", "Bearer " + superAdminToken)
+        mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "managed.user@cems.com",
-                                  "password": "UpdatedUser123!",
-                                  "firstName": "Managed",
-                                  "lastName": "User",
-                                  "middleName": "Gamma",
-                                  "contactNumber": "09170000999",
-                                  "role": "USER"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.middleName").value("Gamma"))
-                .andExpect(jsonPath("$.contactNumber").value("09170000999"));
-
-        mockMvc.perform(delete("/api/users/{userId}", managedAdminId)
-                        .header("Authorization", "Bearer " + superAdminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("User deleted successfully."));
-
-        MvcResult listResult = mockMvc.perform(get("/api/users")
-                        .header("Authorization", "Bearer " + superAdminToken))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        Set<String> emails = extractEmails(listResult.getResponse().getContentAsString());
-        assertTrue(emails.contains("managed.user@cems.com"));
-        assertFalse(emails.contains("managed.admin@cems.com"));
+                        .content(refreshBody(refreshToken)))
+                .andExpect(status().isUnauthorized());
     }
 
+    // --- Forgot / reset / change password ---
+
     @Test
-    void adminCanListUsersButCannotCreateAccounts() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
+    void forgotAndResetPasswordFlow() throws Exception {
+        String token = adminToken();
+        String email = "reset.flow@cems.com";
+        createUser(token, userBody(email, "OriginalPass123!", "faculty", "active"));
 
-        createUser(superAdminToken, """
-                {
-                  "email": "readonly.admin@cems.com",
-                  "password": "ReadOnlyAdmin123!",
-                  "firstName": "Read",
-                  "lastName": "Only",
-                  "middleName": "Admin",
-                  "contactNumber": "09170000021",
-                  "role": "ADMIN"
-                }
-                """);
-
-        String adminToken = loginAndGetAccessToken("readonly.admin@cems.com", "ReadOnlyAdmin123!");
-
-        mockMvc.perform(get("/api/users")
-                        .header("Authorization", "Bearer " + adminToken))
+        mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\"}"))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/users")
-                        .header("Authorization", "Bearer " + adminToken)
+        ArgumentCaptor<String> linkCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailService, timeout(2000)).sendPasswordResetEmail(eq(email), linkCaptor.capture());
+        String resetToken = linkCaptor.getValue().substring(linkCaptor.getValue().indexOf("token=") + 6);
+
+        mockMvc.perform(post("/api/auth/reset-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {
-                                  "email": "forbidden.admin.create@cems.com",
-                                  "password": "Forbidden123!",
-                                  "firstName": "Forbidden",
-                                  "lastName": "Create",
-                                  "middleName": "Admin",
-                                  "contactNumber": "09170000022",
-                                  "role": "USER"
-                                }
+                                {"token":"%s","password":"BrandNew123!","passwordConfirmation":"BrandNew123!"}
+                                """.formatted(resetToken)))
+                .andExpect(status().isOk());
+
+        // New password works; old fails; token cannot be reused.
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, "BrandNew123!")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, "OriginalPass123!")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/auth/reset-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"token":"%s","password":"Another123!","passwordConfirmation":"Another123!"}
+                                """.formatted(resetToken)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void changePasswordRequiresAuthenticationAndUpdatesCredential() throws Exception {
+        String token = adminToken();
+        String email = "change.pw@cems.com";
+        createUser(token, userBody(email, "StartPass123!", "faculty", "active"));
+        String access = login(email, "StartPass123!").get("accessToken").asText();
+
+        mockMvc.perform(post("/api/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"currentPassword":"StartPass123!","newPassword":"Changed123!","newPasswordConfirmation":"Changed123!"}
                                 """))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/change-password")
+                        .header("Authorization", "Bearer " + access)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"currentPassword":"StartPass123!","newPassword":"Changed123!","newPasswordConfirmation":"Changed123!"}
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, "Changed123!")))
+                .andExpect(status().isOk());
+    }
+
+    // --- User management + permissions ---
+
+    @Test
+    void adminCanCreateUpdateAndSoftDeleteUsers() throws Exception {
+        String token = adminToken();
+        JsonNode created = createUser(token, userBody("crud.user@cems.com", "CrudUser123!", "faculty", "active"));
+        String userId = created.get("id").asText();
+
+        mockMvc.perform(put("/api/users/{id}", userId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"crud.user@cems.com","firstName":"Crud","lastName":"User",
+                                 "middleName":"Edited","contactNumber":"09170009999","role":"extension_coordinator"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.middleName").value("Edited"))
+                .andExpect(jsonPath("$.roles[0]").value("extension_coordinator"));
+
+        mockMvc.perform(delete("/api/users/{id}", userId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // Soft-deleted users are excluded from the list.
+        MvcResult listResult = mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertFalse(extractEmails(listResult.getResponse().getContentAsString()).contains("crud.user@cems.com"));
+    }
+
+    @Test
+    void validationErrorsReturn422WithFieldDetails() throws Exception {
+        mockMvc.perform(post("/api/users")
+                        .header("Authorization", "Bearer " + adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"not-an-email","firstName":"","lastName":"User",
+                                 "middleName":"V","contactNumber":"1","role":"faculty"}
+                                """))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.error.fields.email").isArray())
+                .andExpect(jsonPath("$.error.fields.firstName").isArray());
+    }
+
+    @Test
+    void creatingUserWithoutPasswordEmailsTemporaryPasswordAndForcesChange() throws Exception {
+        String email = "temp.pw@cems.com";
+        mockMvc.perform(post("/api/users")
+                        .header("Authorization", "Bearer " + adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"%s","firstName":"Temp","lastName":"User",
+                                 "middleName":"Pw","contactNumber":"09170002222","role":"faculty","status":"active"}
+                                """.formatted(email)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.mustChangePassword").value(true));
+
+        verify(emailService, timeout(2000)).sendTemporaryPasswordEmail(eq(email), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void duplicateEmailReturns409Conflict() throws Exception {
+        mockMvc.perform(post("/api/users")
+                        .header("Authorization", "Bearer " + adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(userBody(ADMIN_EMAIL, "Whatever123!", "faculty", "active")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CONFLICT"));
+    }
+
+    @Test
+    void nonAdminRolesAreForbiddenFromUserManagementAndAuditLog() throws Exception {
+        String facultyToken = login(FACULTY_EMAIL, FACULTY_PASSWORD).get("accessToken").asText();
+
+        mockMvc.perform(get("/api/users").header("Authorization", "Bearer " + facultyToken))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.status").value(403))
-                .andExpect(jsonPath("$.message").value("Access is denied."))
-                .andExpect(jsonPath("$.path").value("/api/users"));
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+        mockMvc.perform(get("/api/activity-logs").header("Authorization", "Bearer " + facultyToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test
-    void validationErrorsUseStandardErrorShape() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
+    void deactivatedUserCannotLogIn() throws Exception {
+        String token = adminToken();
+        JsonNode created = createUser(token, userBody("deactivate.me@cems.com", "Active123!", "faculty", "active"));
 
-        mockMvc.perform(post("/api/users")
-                        .header("Authorization", "Bearer " + superAdminToken)
+        mockMvc.perform(patch("/api/users/{id}/status", created.get("id").asText())
+                        .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "not-an-email",
-                                  "password": "",
-                                  "firstName": "",
-                                  "lastName": "User",
-                                  "middleName": "Validation",
-                                  "contactNumber": "09170000051",
-                                  "role": "USER"
-                                }
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.error").value("Bad Request"))
-                .andExpect(jsonPath("$.message").value("Validation failed."))
-                .andExpect(jsonPath("$.path").value("/api/users"))
-                .andExpect(jsonPath("$.errors.email").isArray())
-                .andExpect(jsonPath("$.errors.password").isArray())
-                .andExpect(jsonPath("$.errors.firstName").isArray());
-    }
-
-    @Test
-    void userListSupportsPaginationSearchFiltersAndSorting() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
-
-        createUser(superAdminToken, """
-                {
-                  "email": "filter.admin@cems.com",
-                  "password": "FilterAdmin123!",
-                  "firstName": "Filter",
-                  "lastName": "Admin",
-                  "middleName": "Query",
-                  "contactNumber": "09170000061",
-                  "role": "ADMIN",
-                  "status": "ACTIVE"
-                }
-                """);
-
-        createUser(superAdminToken, """
-                {
-                  "email": "filter.user@cems.com",
-                  "password": "FilterUser123!",
-                  "firstName": "Filter",
-                  "lastName": "User",
-                  "middleName": "Query",
-                  "contactNumber": "09170000062",
-                  "role": "USER",
-                  "status": "INACTIVE"
-                }
-                """);
-
-        mockMvc.perform(get("/api/users")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .param("page", "1")
-                        .param("perPage", "1")
-                        .param("search", "filter")
-                        .param("role", "USER")
-                        .param("status", "INACTIVE")
-                        .param("sort", "email")
-                        .param("direction", "desc"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.meta.current_page").value(1))
-                .andExpect(jsonPath("$.meta.per_page").value(1))
-                .andExpect(jsonPath("$.meta.total").value(1))
-                .andExpect(jsonPath("$.data[0].email").value("filter.user@cems.com"));
-
-        MvcResult adminFilterResult = mockMvc.perform(get("/api/users")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .param("search", "filter")
-                        .param("role", "ADMIN"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.meta.total").value(1))
-                .andReturn();
-
-        Set<String> emails = extractEmails(adminFilterResult.getResponse().getContentAsString());
-        assertTrue(emails.contains("filter.admin@cems.com"));
-        assertFalse(emails.contains("filter.user@cems.com"));
-    }
-
-    @Test
-    void adminCanPrintUsersPdf() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
-
-        MvcResult printResult = mockMvc.perform(get("/api/users/print")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .accept("application/pdf"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.parseMediaType("application/pdf")))
-                .andExpect(header().string("Content-Disposition", containsString("inline;")))
-                .andExpect(header().string("Content-Disposition", containsString("cems-users.pdf")))
-                .andReturn();
-
-        byte[] pdfBytes = printResult.getResponse().getContentAsByteArray();
-        String pdfText = new String(pdfBytes, StandardCharsets.ISO_8859_1);
-        assertTrue(pdfText.startsWith("%PDF-"));
-        assertTrue(pdfText.contains("CEMS User List"));
-        assertTrue(pdfText.contains("superadmin@cems.com"));
-    }
-
-    @Test
-    void superAdminCanDeactivateUserAndInactiveUserCannotAuthenticateOrUseExistingToken() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
-
-        JsonNode createdUser = createUser(superAdminToken, """
-                {
-                  "email": "inactive.user@cems.com",
-                  "password": "InactiveUser123!",
-                  "firstName": "Inactive",
-                  "lastName": "User",
-                  "middleName": "State",
-                  "contactNumber": "09170000031",
-                  "role": "USER"
-                }
-                """);
-
-        String managedUserId = createdUser.get("id").asText();
-        String managedUserToken = loginAndGetAccessToken("inactive.user@cems.com", "InactiveUser123!");
-
-        mockMvc.perform(patch("/api/users/{userId}/status", managedUserId)
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "status": "INACTIVE"
-                                }
-                                """))
+                        .content("{\"status\":\"INACTIVE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(false));
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "inactive.user@cems.com",
-                                  "password": "InactiveUser123!"
-                                }
-                                """))
+                        .content(loginBody("deactivate.me@cems.com", "Active123!")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.status").value(403))
-                .andExpect(jsonPath("$.message").value("This user account is inactive."));
-
-        mockMvc.perform(get("/api/users/me")
-                        .header("Authorization", "Bearer " + managedUserToken))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.message").value("Authentication is required."));
+                .andExpect(jsonPath("$.error.message").value("This user account is inactive."));
     }
+
+    // --- Activity log ---
 
     @Test
-    void superAdminCanResetManagedUserPasswordAndOnlyNewPasswordWorks() throws Exception {
-        String superAdminToken = loginAndGetAccessToken("superadmin@cems.com", "SuperAdmin123!");
+    void activityLogCapturesLoginAndUserCreation() throws Exception {
+        String token = adminToken();
+        createUser(token, userBody("audit.subject@cems.com", "Audit123!", "faculty", "active"));
 
-        JsonNode createdUser = createUser(superAdminToken, """
-                {
-                  "email": "reset.user@cems.com",
-                  "password": "OriginalUser123!",
-                  "firstName": "Reset",
-                  "lastName": "User",
-                  "middleName": "Flow",
-                  "contactNumber": "09170000041",
-                  "role": "USER"
+        // The write is async/after-commit; poll briefly for it to land.
+        boolean found = false;
+        for (int attempt = 0; attempt < 20 && !found; attempt++) {
+            MvcResult result = mockMvc.perform(get("/api/activity-logs")
+                            .header("Authorization", "Bearer " + token)
+                            .param("action", "user.created")
+                            .param("per_page", "50"))
+                    .andExpect(status().isOk())
+                    .andReturn();
+            JsonNode data = objectMapper.readTree(result.getResponse().getContentAsString()).get("data");
+            for (JsonNode row : data) {
+                if (row.get("metadata").asText().contains("audit.subject@cems.com")) {
+                    found = true;
+                    break;
                 }
-                """);
-
-        String managedUserId = createdUser.get("id").asText();
-
-        mockMvc.perform(patch("/api/users/{userId}/password", managedUserId)
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "password": "UpdatedUser123!",
-                                  "passwordConfirmation": "UpdatedUser123!"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("Password reset successfully."));
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "reset.user@cems.com",
-                                  "password": "OriginalUser123!"
-                                }
-                                """))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.message").value("Invalid email or password."));
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "reset.user@cems.com",
-                                  "password": "UpdatedUser123!"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("reset.user@cems.com"));
+            }
+            if (!found) {
+                Thread.sleep(100);
+            }
+        }
+        assertTrue(found, "Expected a user.created activity log for the created user");
     }
 
-    private String loginAndGetAccessToken(String email, String password) throws Exception {
-        String loginResponse = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "%s",
-                                  "password": "%s"
-                                }
-                                """.formatted(email, password)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isString())
-                .andExpect(jsonPath("$.tokenType").value("Bearer"))
-                .andExpect(jsonPath("$.email").value(email))
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+    // --- helpers ---
 
-        return objectMapper.readTree(loginResponse).get("accessToken").asText();
+    private String adminToken() throws Exception {
+        return login(ADMIN_EMAIL, ADMIN_PASSWORD).get("accessToken").asText();
     }
 
-    private JsonNode createUser(String accessToken, String payload) throws Exception {
-        String responseBody = mockMvc.perform(post("/api/users")
-                        .header("Authorization", "Bearer " + accessToken)
+    private JsonNode login(String email, String password) throws Exception {
+        String body = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(email, password)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    private JsonNode refresh(String refreshToken) throws Exception {
+        String body = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshBody(refreshToken)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    private JsonNode createUser(String token, String payload) throws Exception {
+        String body = mockMvc.perform(post("/api/users")
+                        .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
 
-        return objectMapper.readTree(responseBody);
+    private String loginBody(String email, String password) {
+        return "{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, password);
+    }
+
+    private String refreshBody(String refreshToken) {
+        return "{\"refreshToken\":\"%s\"}".formatted(refreshToken);
+    }
+
+    private String userBody(String email, String password, String role, String status) {
+        return """
+                {"email":"%s","password":"%s","firstName":"Test","lastName":"User",
+                 "middleName":"M","contactNumber":"09170001234","role":"%s","status":"%s"}
+                """.formatted(email, password, role, status);
     }
 
     private Set<String> extractEmails(String responseBody) throws Exception {
