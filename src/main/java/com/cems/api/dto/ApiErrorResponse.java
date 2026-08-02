@@ -34,6 +34,7 @@ public class ApiErrorResponse {
             case FORBIDDEN -> "FORBIDDEN";
             case NOT_FOUND -> "NOT_FOUND";
             case CONFLICT -> "CONFLICT";
+            case GONE -> "GONE";
             case UNPROCESSABLE_ENTITY -> "VALIDATION_FAILED";
             case LOCKED -> "LOCKED";
             case TOO_MANY_REQUESTS -> "RATE_LIMITED";

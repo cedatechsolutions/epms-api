@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtUtils {
@@ -39,7 +40,10 @@ public class JwtUtils {
         Object principal = authentication.getPrincipal();
         String username = principal instanceof UserDetails userDetails ? userDetails.getUsername()
                 : principal.toString();
+        // A unique jti guarantees distinct token strings even for two logins in the same second;
+        // without it, a re-login could reproduce a byte-identical token still on the logout blocklist.
         return Jwts.builder()
+                .setId(UUID.randomUUID().toString())
                 .setSubject(username)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
@@ -49,6 +53,7 @@ public class JwtUtils {
 
     public String generateTokenFromUsername(String username) {
         return Jwts.builder()
+                .setId(UUID.randomUUID().toString())
                 .setSubject(username)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + jwtExpirationMs))

@@ -95,7 +95,10 @@ public class SecurityConfig {
                                 request)))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**", "/actuator/health", "/actuator/health/**", "/h2-console/**")
+                        // Public survey form + submission are unauthenticated by design (spec Module 3 §3);
+                        // they expose no PII and accept no uploads, and submissions are rate-limited per IP.
+                        .requestMatchers("/api/auth/**", "/api/public/**",
+                                "/actuator/health", "/actuator/health/**", "/h2-console/**")
                         .permitAll()
                         .anyRequest().authenticated());
         http.authenticationProvider(authenticationProvider);

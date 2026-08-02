@@ -20,4 +20,7 @@ public interface UserRepository extends JpaRepository<User, String>, JpaSpecific
     long countByDeletedAtIsNull();
 
     long countByActiveAndDeletedAtIsNull(boolean active);
+
+    /** Active holders of a role, used to fill report signatory blocks (spec Module 3 §5). */
+    List<User> findByRoles_NameAndActiveTrueAndDeletedAtIsNull(String roleName);
 }

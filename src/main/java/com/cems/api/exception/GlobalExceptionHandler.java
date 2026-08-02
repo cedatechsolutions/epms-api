@@ -75,6 +75,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), null);
     }
 
+    @ExceptionHandler(GoneException.class)
+    public ResponseEntity<ApiErrorResponse> handleGone(GoneException ex) {
+        return build(HttpStatus.GONE, ex.getMessage(), null);
+    }
+
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), null);
