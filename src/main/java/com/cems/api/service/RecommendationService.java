@@ -13,6 +13,7 @@ import com.cems.api.exception.ConflictException;
 import com.cems.api.repository.AssessmentResultRepository;
 import com.cems.api.repository.ProgramTypeNeedWeightRepository;
 import com.cems.api.repository.ProgramTypeRepository;
+import com.cems.api.repository.ProgramRepository;
 import com.cems.api.repository.RecommendationRepository;
 import com.cems.api.repository.SurveyRepository;
 import com.cems.api.repository.UserRepository;
@@ -50,8 +51,10 @@ public class RecommendationService {
     private final ProgramTypeRepository programTypeRepository;
     private final ProgramTypeNeedWeightRepository weightRepository;
     private final RecommendationRepository recommendationRepository;
+    private final ProgramRepository programRepository;
     private final UserRepository userRepository;
     private final RecommendationScoringService scoringService;
+    private final ProgramService programService;
     private final ActivityLogService activityLogService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -60,16 +63,20 @@ public class RecommendationService {
             ProgramTypeRepository programTypeRepository,
             ProgramTypeNeedWeightRepository weightRepository,
             RecommendationRepository recommendationRepository,
+            ProgramRepository programRepository,
             UserRepository userRepository,
             RecommendationScoringService scoringService,
+            ProgramService programService,
             ActivityLogService activityLogService) {
         this.surveyRepository = surveyRepository;
         this.resultRepository = resultRepository;
         this.programTypeRepository = programTypeRepository;
         this.weightRepository = weightRepository;
         this.recommendationRepository = recommendationRepository;
+        this.programRepository = programRepository;
         this.userRepository = userRepository;
         this.scoringService = scoringService;
+        this.programService = programService;
         this.activityLogService = activityLogService;
     }
 
@@ -130,14 +137,34 @@ public class RecommendationService {
     @Transactional(readOnly = true)
     public List<RecommendationResponse> list(String surveyId) {
         findActive(surveyId);
-        return recommendationRepository.findBySurveyIdOrderByRankPositionAsc(surveyId).stream()
-                .map(this::toResponse)
+        List<Recommendation> recommendations =
+                recommendationRepository.findBySurveyIdOrderByRankPositionAsc(surveyId);
+        Map<String, String> spawned = resolveSpawnedPrograms(recommendations);
+        return recommendations.stream()
+                .map(recommendation -> toResponse(recommendation, spawned.get(recommendation.getId())))
                 .toList();
     }
 
+    /** One query for the whole set, so a card's "view proposal" link costs nothing extra per row. */
+    private Map<String, String> resolveSpawnedPrograms(List<Recommendation> recommendations) {
+        if (recommendations.isEmpty()) {
+            return Map.of();
+        }
+        List<String> ids = recommendations.stream().map(Recommendation::getId).toList();
+        Map<String, String> spawned = new java.util.HashMap<>();
+        for (Object[] row : programRepository.findProgramIdsByRecommendationIds(ids)) {
+            spawned.put((String) row[0], (String) row[1]);
+        }
+        return spawned;
+    }
+
     /**
-     * Records a coordinator's ruling. Accepting or modifying is the provenance link a Phase 4
-     * program will be born from; rejecting requires a reason.
+     * Records a coordinator's ruling.
+     *
+     * <p>Accepting or modifying <b>spawns a pre-filled draft proposal</b> (spec Module 4 §3 → Module
+     * 5): the recommendation is the provenance of the program, so the two are created in the same
+     * transaction — a failure to draft the proposal rolls the decision back rather than leaving an
+     * accepted recommendation with nothing to show for it. Rejecting requires a reason.
      *
      * @throws IllegalArgumentException (422) when rejecting without a reason
      * @throws ConflictException        (409) when the recommendation was already decided
@@ -160,16 +187,21 @@ public class RecommendationService {
         recommendation.setDecidedAt(Instant.now());
         recommendationRepository.save(recommendation);
 
+        String spawnedProgramId = null;
+        if (Recommendation.STATUS_ACCEPTED.equals(status) || Recommendation.STATUS_MODIFIED.equals(status)) {
+            spawnedProgramId = programService.createFromRecommendation(recommendation).getId();
+        }
+
         activityLogService.record("recommendation." + status, "recommendation", recommendationId,
                 Map.of("programType", recommendation.getProgramType().getName(),
                         "surveyId", recommendation.getSurvey().getId()));
 
-        return toResponse(recommendation);
+        return toResponse(recommendation, spawnedProgramId);
     }
 
     // --- helpers ---
 
-    private RecommendationResponse toResponse(Recommendation recommendation) {
+    private RecommendationResponse toResponse(Recommendation recommendation, String spawnedProgramId) {
         ProgramType programType = recommendation.getProgramType();
         String decidedByName = recommendation.getDecidedBy() == null
                 ? null
@@ -192,7 +224,8 @@ public class RecommendationService {
                 recommendation.getDecidedAt(),
                 recommendation.getDecisionNote(),
                 recommendation.getCreatedAt(),
-                parseBreakdown(recommendation.getScoreBreakdown()));
+                parseBreakdown(recommendation.getScoreBreakdown()),
+                spawnedProgramId);
     }
 
     private String displayName(User user) {

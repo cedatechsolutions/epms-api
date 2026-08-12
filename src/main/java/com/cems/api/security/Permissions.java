@@ -82,6 +82,74 @@ public class Permissions {
                 RoleName.EXTENSION_COORDINATOR);
     }
 
+    // --- Module 5a: programs & approval workflow (spec §2.2) ---
+
+    /**
+     * Create and edit proposals: admin, both coordinator roles, and faculty (matrix row "Create
+     * proposals"). Faculty are further restricted to proposals they created or lead by an ownership
+     * check in {@code ProgramService}. Campus admin is excluded — they approve, they do not author.
+     */
+    public boolean canCreatePrograms() {
+        return hasAnyRole(RoleName.ADMIN,
+                RoleName.CAMPUS_EXTENSION_COORDINATOR,
+                RoleName.EXTENSION_COORDINATOR,
+                RoleName.FACULTY);
+    }
+
+    /**
+     * View proposals: every authenticated role, including student volunteers, who need to see the
+     * programs they help run. The list is narrowed per-role in the service layer.
+     */
+    public boolean canViewPrograms() {
+        return isAuthenticated();
+    }
+
+    /**
+     * Stage 2 — "Note" a submitted proposal onward.
+     *
+     * <p><strong>Read this before "fixing" it:</strong> the next three checks each name exactly one
+     * role and deliberately EXCLUDE admin, unlike every other policy in this class. Spec §2.2 marks
+     * admin "—" on all three review rows because the chain mirrors real CvSU signatories — letting a
+     * system administrator note, recommend or approve would make {@code program_approvals} a record
+     * of a signature that never happened. Widening these is a spec change, not a bug fix.
+     */
+    public boolean canReviewProposals() {
+        return hasRole(RoleName.EXTENSION_COORDINATOR);
+    }
+
+    /** Stage 3 — "Recommend" a noted proposal for final approval. Campus extension coordinator only. */
+    public boolean canRecommendApproval() {
+        return hasRole(RoleName.CAMPUS_EXTENSION_COORDINATOR);
+    }
+
+    /** Stage 4 — final approval. Campus administrator only. */
+    public boolean canFinalApprove() {
+        return hasRole(RoleName.CAMPUS_ADMIN);
+    }
+
+    /**
+     * Coarse gate for the three review endpoints: the caller holds at least one stage role. The
+     * endpoint-specific check above still runs, and the state machine independently verifies the
+     * role owns the stage the proposal is actually sitting at.
+     */
+    public boolean canActOnApprovalChain() {
+        return hasAnyRole(RoleName.EXTENSION_COORDINATOR,
+                RoleName.CAMPUS_EXTENSION_COORDINATOR,
+                RoleName.CAMPUS_ADMIN);
+    }
+
+    // --- Module 6: dashboard ---
+
+    /**
+     * The landing dashboard is open to every authenticated role — it is the screen users arrive on
+     * after signing in. It carries no data a role cannot already reach: proposal counts are scoped
+     * by {@code ProgramService}, and the activity feed is attached only when
+     * {@link #canViewActivityLogs()} passes.
+     */
+    public boolean canViewDashboard() {
+        return isAuthenticated();
+    }
+
     // --- shared helpers (used by the checks above and by future module policies) ---
 
     private boolean isAuthenticated() {

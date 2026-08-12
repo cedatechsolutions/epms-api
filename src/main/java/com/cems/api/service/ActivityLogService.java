@@ -106,6 +106,21 @@ public class ActivityLogService {
         return logs.map(log -> ActivityLogResponse.fromEntity(log, labels.get(log.getUserId())));
     }
 
+    /**
+     * The newest {@code limit} audit rows, for the dashboard's activity feed. Shares
+     * {@link #resolveUserLabels} with {@link #search} so a name is rendered the same way in both.
+     */
+    @Transactional(readOnly = true)
+    public List<ActivityLogResponse> recent(int limit) {
+        List<ActivityLog> logs = activityLogRepository.findRecent(
+                PageRequest.of(0, Math.min(50, Math.max(1, limit))));
+        Map<String, String> labels = resolveUserLabels(logs);
+
+        return logs.stream()
+                .map(log -> ActivityLogResponse.fromEntity(log, labels.get(log.getUserId())))
+                .toList();
+    }
+
     private Specification<ActivityLog> buildSpecification(ActivityLogQuery query) {
         return (root, criteriaQuery, cb) -> {
             List<Predicate> predicates = new ArrayList<>();

@@ -8,6 +8,10 @@ import java.util.List;
  * One ranked recommendation (spec Module 4 §2). {@code breakdown} is the parsed
  * {@code score_breakdown} JSON — the UI's "why was this recommended?" popover renders it, and the
  * spec requires {@code matchScore} to be reproducible from it.
+ *
+ * <p>{@code spawnedProgramId} is the draft proposal created when this recommendation was accepted
+ * or modified (Module 4 → Module 5 provenance); null for pending, rejected, or accepted-then-deleted
+ * recommendations. It lets the card link straight to the proposal it produced.
  */
 public record RecommendationResponse(
         String id,
@@ -24,7 +28,8 @@ public record RecommendationResponse(
         Instant decidedAt,
         String decisionNote,
         Instant createdAt,
-        ScoreBreakdown breakdown) {
+        ScoreBreakdown breakdown,
+        String spawnedProgramId) {
 
     /**
      * The stored explanation. Kept as a record (not a raw JSON string) so the contract is typed on

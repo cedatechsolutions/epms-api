@@ -9,10 +9,13 @@ import com.cems.api.dto.CommunityStatsResponse;
 import com.cems.api.dto.CommunitySummaryResponse;
 import com.cems.api.entity.Community;
 import com.cems.api.entity.CommunityDocument;
+import com.cems.api.entity.Program;
 import com.cems.api.entity.Sector;
 import com.cems.api.entity.User;
+import com.cems.api.exception.ConflictException;
 import com.cems.api.repository.CommunityDocumentRepository;
 import com.cems.api.repository.CommunityRepository;
+import com.cems.api.repository.ProgramRepository;
 import com.cems.api.repository.SectorRepository;
 import com.cems.api.repository.UserRepository;
 import jakarta.persistence.criteria.Join;
@@ -62,6 +65,7 @@ public class CommunityService {
     private final CommunityDocumentRepository documentRepository;
     private final SectorRepository sectorRepository;
     private final UserRepository userRepository;
+    private final ProgramRepository programRepository;
     private final StorageService storageService;
     private final ActivityLogService activityLogService;
 
@@ -69,12 +73,14 @@ public class CommunityService {
             CommunityDocumentRepository documentRepository,
             SectorRepository sectorRepository,
             UserRepository userRepository,
+            ProgramRepository programRepository,
             StorageService storageService,
             ActivityLogService activityLogService) {
         this.communityRepository = communityRepository;
         this.documentRepository = documentRepository;
         this.sectorRepository = sectorRepository;
         this.userRepository = userRepository;
+        this.programRepository = programRepository;
         this.storageService = storageService;
         this.activityLogService = activityLogService;
     }
@@ -101,7 +107,22 @@ public class CommunityService {
             communities = communityRepository.findAll(specification,
                     PageRequest.of(communities.getTotalPages() - 1, pageSize, sort));
         }
-        return communities.map(CommunitySummaryResponse::fromEntity);
+        Map<String, Integer> programCounts = countActivePrograms(communities.getContent());
+        return communities.map(community -> CommunitySummaryResponse.fromEntity(
+                community, programCounts.getOrDefault(community.getId(), 0)));
+    }
+
+    /** One grouped query for the whole page, rather than a count per row. */
+    private Map<String, Integer> countActivePrograms(List<Community> communities) {
+        if (communities.isEmpty()) {
+            return Map.of();
+        }
+        List<String> ids = communities.stream().map(Community::getId).toList();
+        Map<String, Integer> counts = new java.util.HashMap<>();
+        for (Object[] row : programRepository.countActiveByCommunityIds(ids)) {
+            counts.put((String) row[0], ((Number) row[1]).intValue());
+        }
+        return counts;
     }
 
     @Transactional(readOnly = true)
@@ -109,11 +130,24 @@ public class CommunityService {
         return toResponse(findActive(id));
     }
 
+    /**
+     * The community's extension history, newest first (spec Module 2 §2). Derived from programs
+     * rather than stored, so it can never drift from the proposals themselves.
+     *
+     * <p>{@code beneficiaryCount} reports the <em>target</em> beneficiaries recorded on the proposal.
+     * Actual attendance-derived counts arrive with Phase 5.
+     */
     @Transactional(readOnly = true)
     public List<CommunityHistoryEntry> getHistory(String id) {
         findActive(id); // 404 if missing/deleted
-        // Derived from programs (Phase 4) — empty until that module lands (plan Phase 1 scope note).
-        return List.of();
+        return programRepository.findByCommunityIdAndDeletedAtIsNullOrderByCreatedAtDesc(id).stream()
+                .map(program -> new CommunityHistoryEntry(
+                        program.getId(),
+                        program.getTitle(),
+                        program.getStatus(),
+                        program.getCreatedAt(),
+                        program.getTargetBeneficiaries() == null ? 0 : program.getTargetBeneficiaries()))
+                .toList();
     }
 
     // --- writes ---
@@ -279,11 +313,17 @@ public class CommunityService {
     }
 
     /**
-     * Placeholder for the Phase 4 delete-block: a community with non-cancelled programs must not be
-     * deletable (spec §2 AC → 409). The programs table does not exist yet, so this is a no-op today.
+     * A community with non-cancelled programs must not be deletable (spec Module 2 AC → 409).
+     * Drafts count: an in-progress proposal still references the community, and silently orphaning
+     * it would break the proposal rather than protect the data.
      */
     private void assertDeletable(Community community) {
-        // TODO Phase 4: throw ConflictException when community has non-cancelled programs.
+        boolean hasLivePrograms = programRepository.existsByCommunityIdAndDeletedAtIsNullAndStatusNot(
+                community.getId(), Program.STATUS_CANCELLED);
+        if (hasLivePrograms) {
+            throw new ConflictException("This community still has active extension programs and cannot "
+                    + "be deleted. Cancel or reassign them first.");
+        }
     }
 
     private Community findActive(String id) {

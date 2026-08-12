@@ -6,9 +6,9 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Community list-row projection (spec Module 2 §1). {@code lastAssessmentDate} and
- * {@code activeProgramCount} are derived from surveys/programs that arrive in later phases —
- * null/0 until then (plan Phase 1 scope note).
+ * Community list-row projection (spec Module 2 §1). {@code lastAssessmentDate} is derived from
+ * surveys and is still null (Phase 2 leftover); {@code activeProgramCount} counts non-cancelled
+ * programs and is supplied by the caller, which batches the counts for the whole page in one query.
  */
 public record CommunitySummaryResponse(
         String id,
@@ -21,6 +21,10 @@ public record CommunitySummaryResponse(
         int activeProgramCount) {
 
     public static CommunitySummaryResponse fromEntity(Community community) {
+        return fromEntity(community, 0);
+    }
+
+    public static CommunitySummaryResponse fromEntity(Community community, int activeProgramCount) {
         return new CommunitySummaryResponse(
                 community.getId(),
                 community.getName(),
@@ -32,6 +36,6 @@ public record CommunitySummaryResponse(
                         .sorted(java.util.Comparator.comparing(SectorResponse::name))
                         .toList(),
                 null, // lastAssessmentDate — Phase 2 (surveys)
-                0);   // activeProgramCount — Phase 4 (programs)
+                activeProgramCount);
     }
 }

@@ -50,6 +50,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "Validation failed.", fields);
     }
 
+    @ExceptionHandler(ValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleServiceValidation(ValidationException ex) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), ex.getFields());
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ApiErrorResponse> handleBadCredentials(BadCredentialsException ex) {
         return build(HttpStatus.UNAUTHORIZED, "Invalid email or password.", null);
