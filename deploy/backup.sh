@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-COMPOSE_DIR="${CEMS_COMPOSE_DIR:-/opt/cems/api/api/deploy}"
+COMPOSE_DIR="${CEMS_COMPOSE_DIR:-/opt/cems/deploy}"
 BACKUP_DIR="${CEMS_BACKUP_DIR:-/var/backups/cems}"
 DAILY_KEEP="${CEMS_DAILY_KEEP:-7}"
 WEEKLY_KEEP="${CEMS_WEEKLY_KEEP:-4}"

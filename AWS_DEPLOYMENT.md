@@ -29,7 +29,7 @@ is a change to `SPRING_DATASOURCE_URL` and nothing else.
 Vercel frontend (https://your-app.vercel.app)
         │  HTTPS
         ▼
-   api.yourdomain.com  ─►  EC2 t4g.small (Ubuntu 24.04, arm64)
+   api.yourdomain.com  ─►  EC2 t4g.small (Ubuntu LTS, arm64)
                             ├─ nginx :443        TLS, proxy, 12 MB body cap
                             ├─ api container     127.0.0.1:8080 only
                             ├─ db container      compose network only, not published
@@ -66,7 +66,9 @@ free tier covers — free-tier terms differ for newer accounts.
 
 EC2 → Launch instance:
 
-- **AMI**: Ubuntu Server 24.04 LTS, **architecture arm64** (must match the `t4g` instance family).
+- **AMI**: Ubuntu Server LTS (24.04 or later), **architecture arm64**. The Quick Start panel
+  defaults the Architecture dropdown to 64-bit (x86); switch it to **64-bit (Arm)** or the image
+  will not boot on a `t4g`. Confirm afterwards that the instance-type list offers `t4g.*`.
 - **Instance type**: `t4g.small` (2 vCPU, 2 GiB).
 - **Key pair**: your SSH key.
 - **Storage**: 20 GiB `gp3`.
@@ -112,7 +114,7 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-**Docker.**
+**Docker**, from Docker's own apt repository:
 
 ```bash
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -128,6 +130,29 @@ sudo usermod -aG docker ubuntu
 ```
 
 Log out and back in for the group change to apply, then confirm with `docker ps`.
+
+> **If `apt-get update` fails with "Release file not found"**, Docker has not published a suite for
+> this Ubuntu release's codename yet — likely on a recently released LTS. Check first:
+>
+> ```bash
+> . /etc/os-release && curl -fsI \
+>   "https://download.docker.com/linux/ubuntu/dists/$VERSION_CODENAME/Release" \
+>   > /dev/null && echo "suite exists" || echo "suite missing"
+> ```
+>
+> If it is missing, take Docker from Ubuntu's own repositories instead. Slightly older, fully
+> supported, and it provides the same `docker compose` subcommand this deployment relies on:
+>
+> ```bash
+> sudo rm -f /etc/apt/sources.list.d/docker.list
+> sudo apt-get update
+> sudo apt-get install -y docker.io docker-compose-v2 docker-buildx
+> sudo systemctl enable --now docker
+> sudo usermod -aG docker ubuntu
+> ```
+>
+> Verify with `docker compose version` — it must be v2.x, since `docker-compose.yml` uses
+> `deploy.resources.limits` and `docker compose cp`, neither of which works on the v1 script.
 
 **nginx and certbot.**
 
@@ -146,18 +171,36 @@ sudo chown -R 10001:10001 /var/lib/cems
 **Code.**
 
 ```bash
+sudo apt-get install -y git
 sudo mkdir -p /opt/cems
 sudo chown ubuntu:ubuntu /opt/cems
-git clone <your-repo-url> /opt/cems
+git clone https://github.com/cedatechsolutions/epms-api.git /opt/cems
 ```
 
-The paths in `cems.service`, `deploy.sh`, and `backup.sh` assume the checkout is at `/opt/cems`,
-putting this file at `/opt/cems/api/api/`. Adjust those files if you clone elsewhere.
+This repository's root is the Spring Boot project itself, so the checkout puts `pom.xml`,
+`Dockerfile`, and `deploy/` directly under `/opt/cems`. The paths in `cems.service` and `backup.sh`
+assume exactly that; adjust them if you clone elsewhere.
+
+If the repository is private, HTTPS will prompt for credentials that GitHub no longer accepts.
+Use a read-only **deploy key** instead — it scopes access to this one repository, which a personal
+access token does not:
+
+```bash
+ssh-keygen -t ed25519 -C "cems-ec2-deploy" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add that public key under the repository's **Settings → Deploy keys** on GitHub (leave "Allow write
+access" unchecked), then clone over SSH instead:
+
+```bash
+git clone git@github.com:cedatechsolutions/epms-api.git /opt/cems
+```
 
 ## 4. Configure and start the stack
 
 ```bash
-cd /opt/cems/api/api/deploy
+cd /opt/cems/deploy
 cp .env.example .env
 chmod 600 .env
 nano .env
@@ -187,7 +230,7 @@ The first start builds the API image from source, which takes several minutes on
 size. Follow it with:
 
 ```bash
-docker compose -f /opt/cems/api/api/deploy/docker-compose.yml logs -f
+docker compose -f /opt/cems/deploy/docker-compose.yml logs -f
 ```
 
 Flyway applies migrations `V1`–`V9` automatically before the app finishes starting. Look for the
@@ -225,7 +268,7 @@ timer for renewals; confirm the whole path works with `sudo certbot renew --dry-
 **Then install the site:**
 
 ```bash
-cd /opt/cems/api/api/deploy
+cd /opt/cems/deploy
 sudo cp nginx/cems-api.conf /etc/nginx/sites-available/cems-api
 sudo sed -i 's/api\.example\.com/api.yourdomain.com/g' /etc/nginx/sites-available/cems-api
 sudo ln -sf /etc/nginx/sites-available/cems-api /etc/nginx/sites-enabled/cems-api
@@ -282,7 +325,7 @@ plan or a Data Lifecycle Manager policy: daily snapshot, 7-day retention.
 where you want the data back without rolling the entire machine back:
 
 ```bash
-sudo cp /opt/cems/api/api/deploy/backup.sh /usr/local/bin/cems-backup
+sudo cp /opt/cems/deploy/backup.sh /usr/local/bin/cems-backup
 sudo chmod +x /usr/local/bin/cems-backup
 sudo crontab -e
 # 15 3 * * * /usr/local/bin/cems-backup >> /var/log/cems-backup.log 2>&1
@@ -297,7 +340,7 @@ restore procedure in `DATABASE_OPERATIONS.md`.
 ## Redeploying
 
 ```bash
-cd /opt/cems/api/api/deploy && ./deploy.sh
+cd /opt/cems/deploy && ./deploy.sh
 ```
 
 This pulls, rebuilds the API image, restarts only the `api` service, waits for health, and prunes

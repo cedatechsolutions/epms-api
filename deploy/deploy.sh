@@ -2,7 +2,7 @@
 #
 # Pull the latest code, rebuild the API image, and restart the stack — run on the EC2 instance.
 #
-#   cd /opt/cems/api/api/deploy && ./deploy.sh
+#   cd /opt/cems/deploy && ./deploy.sh
 #
 # The database container is not rebuilt or restarted; only the API is replaced, so a deploy
 # does not interrupt or risk the data volume.
