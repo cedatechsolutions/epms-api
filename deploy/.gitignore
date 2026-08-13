@@ -1,0 +1,2 @@
+# Production secrets live here on the instance and must never be committed.
+.env

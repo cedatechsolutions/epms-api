@@ -22,7 +22,7 @@ Do not enable baselining by default in production. It can hide a schema that has
 
 ## Backup Policy
 
-For production, use managed PostgreSQL backups from the hosting provider plus periodic manual export before risky changes.
+Production runs PostgreSQL in a container on the EC2 instance rather than on a managed service, so backups are ours to run. Two layers cover it: nightly logical dumps via `deploy/backup.sh` (installed as a cron job — see [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md)) and EBS volume snapshots, plus a manual export before risky changes.
 
 - Automated backups: daily.
 - Retention: at least 7 daily backups and 4 weekly backups.

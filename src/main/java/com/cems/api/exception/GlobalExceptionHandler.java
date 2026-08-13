@@ -14,6 +14,7 @@ import org.springframework.security.authentication.LockedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
@@ -99,6 +100,16 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleIllegalState(IllegalStateException ex) {
         logger.error("Illegal state: {}", ex.getMessage());
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected server error occurred.", null);
+    }
+
+    /**
+     * The servlet container aborts an oversized upload before it ever reaches the storage layer's
+     * own 10 MB check, so without this the caller gets an opaque 500. Mirrors the message the
+     * storage validator produces for a file that is merely at the limit.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, "File exceeds the 10 MB maximum.", null);
     }
 
     @ExceptionHandler(ResponseStatusException.class)

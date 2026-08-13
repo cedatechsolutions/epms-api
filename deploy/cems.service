@@ -1,0 +1,35 @@
+# systemd unit for the CEMS backend stack.
+#
+# Install:
+#   sudo cp deploy/cems.service /etc/systemd/system/cems.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cems
+#
+# Adjust WorkingDirectory if the repository is not checked out at /opt/cems.
+
+[Unit]
+Description=CEMS API stack (Spring Boot + PostgreSQL)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cems/api/api/deploy
+
+# Compose reads .env from this directory for the secrets referenced in docker-compose.yml.
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+# systemctl reload cems  ->  pick up a rebuilt image without a full stop/start.
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+# Pulling the base images and building the jar on a small instance can take a while
+# on the very first start.
+TimeoutStartSec=900
+
+Restart=on-failure
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target

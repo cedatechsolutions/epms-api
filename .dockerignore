@@ -1,0 +1,20 @@
+# Build output — the image builds the jar itself; copying a host-built target/ in would
+# both bloat the context and risk shipping a stale or wrong-architecture artifact.
+target/
+.m2/
+
+# Local runtime state. Uploaded files live on the host volume in a deployment, never in the image.
+storage/
+.env
+*.log
+
+# VCS and editor metadata
+.git/
+.github/
+.idea/
+.vscode/
+.mvn/wrapper/maven-wrapper.jar
+*.iml
+
+# Docs are not needed at build time
+*.md
