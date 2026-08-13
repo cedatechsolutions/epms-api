@@ -32,6 +32,14 @@ public class User {
 
     private String contactNumber;
 
+    /** Storage-relative path of the profile photo; null when the user has no photo. */
+    private String avatarPath;
+
+    private String avatarMimeType;
+
+    /** Set on every avatar upload; null once the photo is removed (doubles as the "has photo" flag). */
+    private Instant avatarUpdatedAt;
+
     private Boolean active = true;
 
     @Column(nullable = false)
@@ -118,6 +126,30 @@ public class User {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public String getAvatarPath() {
+        return avatarPath;
+    }
+
+    public void setAvatarPath(String avatarPath) {
+        this.avatarPath = avatarPath;
+    }
+
+    public String getAvatarMimeType() {
+        return avatarMimeType;
+    }
+
+    public void setAvatarMimeType(String avatarMimeType) {
+        this.avatarMimeType = avatarMimeType;
+    }
+
+    public Instant getAvatarUpdatedAt() {
+        return avatarUpdatedAt;
+    }
+
+    public void setAvatarUpdatedAt(Instant avatarUpdatedAt) {
+        this.avatarUpdatedAt = avatarUpdatedAt;
     }
 
     public boolean isActive() {

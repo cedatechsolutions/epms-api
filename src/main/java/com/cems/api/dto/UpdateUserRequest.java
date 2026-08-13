@@ -17,10 +17,10 @@ public class UpdateUserRequest {
     @NotBlank
     private String lastName;
 
-    @NotBlank
+    // Optional: not every account has a middle name, and a contact number is not always known
+    // at the time the account is created. Blank values are normalized to null when stored.
     private String middleName;
 
-    @NotBlank
     private String contactNumber;
 
     @NotBlank

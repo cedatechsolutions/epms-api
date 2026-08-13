@@ -202,11 +202,22 @@ public class UserManagementService {
             String lastName,
             String middleName,
             String contactNumber) {
-        user.setEmail(email);
-        user.setFirstName(firstName);
-        user.setLastName(lastName);
-        user.setMiddleName(middleName);
-        user.setContactNumber(contactNumber);
+        user.setEmail(trimmed(email));
+        user.setFirstName(trimmed(firstName));
+        user.setLastName(trimmed(lastName));
+        // Middle name and contact number are optional; store an omitted one as null rather than
+        // an empty string so "no value" reads the same however the client sent it.
+        user.setMiddleName(trimmedOrNull(middleName));
+        user.setContactNumber(trimmedOrNull(contactNumber));
+    }
+
+    private String trimmed(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private String trimmedOrNull(String value) {
+        String trimmed = trimmed(value);
+        return trimmed == null || trimmed.isEmpty() ? null : trimmed;
     }
 
     private User findManageableUser(String userId) {

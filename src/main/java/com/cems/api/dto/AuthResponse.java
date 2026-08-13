@@ -18,6 +18,8 @@ public class AuthResponse {
     private String lastName;
     private String middleName;
     private String contactNumber;
+    /** Non-null when the user has a profile photo; clients use it as the avatar cache key. */
+    private Instant avatarUpdatedAt;
     private boolean active;
     private Instant lastLoginAt;
     private Set<String> roles;
@@ -35,6 +37,7 @@ public class AuthResponse {
             String lastName,
             String middleName,
             String contactNumber,
+            Instant avatarUpdatedAt,
             boolean active,
             Instant lastLoginAt,
             Set<String> roles) {
@@ -48,6 +51,7 @@ public class AuthResponse {
         this.lastName = lastName;
         this.middleName = middleName;
         this.contactNumber = contactNumber;
+        this.avatarUpdatedAt = avatarUpdatedAt;
         this.active = active;
         this.lastLoginAt = lastLoginAt;
         this.roles = roles;
@@ -65,6 +69,7 @@ public class AuthResponse {
                 user.getLastName(),
                 user.getMiddleName(),
                 user.getContactNumber(),
+                user.getAvatarUpdatedAt(),
                 user.isActive(),
                 user.getLastLoginAt(),
                 user.getRoles().stream()
@@ -151,6 +156,14 @@ public class AuthResponse {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public Instant getAvatarUpdatedAt() {
+        return avatarUpdatedAt;
+    }
+
+    public void setAvatarUpdatedAt(Instant avatarUpdatedAt) {
+        this.avatarUpdatedAt = avatarUpdatedAt;
     }
 
     public boolean isActive() {

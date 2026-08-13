@@ -14,6 +14,8 @@ public class UserResponse {
     private String lastName;
     private String middleName;
     private String contactNumber;
+    /** Non-null when the user has a profile photo; clients use it as the avatar cache key. */
+    private Instant avatarUpdatedAt;
     private boolean active;
     private boolean mustChangePassword;
     private Instant lastLoginAt;
@@ -29,6 +31,7 @@ public class UserResponse {
         response.lastName = user.getLastName();
         response.middleName = user.getMiddleName();
         response.contactNumber = user.getContactNumber();
+        response.avatarUpdatedAt = user.getAvatarUpdatedAt();
         response.active = user.isActive();
         response.mustChangePassword = user.isMustChangePassword();
         response.lastLoginAt = user.getLastLoginAt();
@@ -87,6 +90,14 @@ public class UserResponse {
 
     public void setContactNumber(String contactNumber) {
         this.contactNumber = contactNumber;
+    }
+
+    public Instant getAvatarUpdatedAt() {
+        return avatarUpdatedAt;
+    }
+
+    public void setAvatarUpdatedAt(Instant avatarUpdatedAt) {
+        this.avatarUpdatedAt = avatarUpdatedAt;
     }
 
     public boolean isActive() {
