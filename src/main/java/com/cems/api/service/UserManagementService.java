@@ -3,6 +3,7 @@ package com.cems.api.service;
 import com.cems.api.dto.CreateUserRequest;
 import com.cems.api.dto.UserListQuery;
 import com.cems.api.dto.UpdateUserRequest;
+import com.cems.api.dto.UserOptionResponse;
 import com.cems.api.dto.UserResponse;
 import com.cems.api.dto.UserStatsResponse;
 import com.cems.api.entity.Role;
@@ -69,6 +70,32 @@ public class UserManagementService {
     public List<UserResponse> getAllUsers() {
         return userRepository.findByDeletedAtIsNull(Sort.by("lastName", "firstName", "email")).stream()
                 .map(UserResponse::fromEntity)
+                .toList();
+    }
+
+    /**
+     * Active people as picker options, optionally narrowed to one role (spec Module 5 §2 — the
+     * proposal form's faculty-lead select).
+     *
+     * <p>Soft-deleted and deactivated accounts are excluded: naming a departed colleague as the
+     * lead of a new proposal would put the approval chain in someone's name who cannot act on it.
+     * An unknown role code yields an empty list rather than an error, so a stale client filter
+     * degrades to "no options" instead of a 500.
+     */
+    public List<UserOptionResponse> getDirectory(String roleCode) {
+        List<User> users;
+        if (roleCode == null || roleCode.isBlank()) {
+            users = userRepository.findByActiveTrueAndDeletedAtIsNull(
+                    Sort.by("lastName", "firstName", "email"));
+        } else if (RoleName.isValidCode(roleCode)) {
+            users = userRepository.findByRoles_NameAndActiveTrueAndDeletedAtIsNull(
+                    RoleName.fromCode(roleCode).code());
+        } else {
+            users = List.of();
+        }
+        return users.stream()
+                .map(UserOptionResponse::fromEntity)
+                .sorted(java.util.Comparator.comparing(UserOptionResponse::name, String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 

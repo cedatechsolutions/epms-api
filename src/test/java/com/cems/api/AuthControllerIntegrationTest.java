@@ -306,6 +306,46 @@ class AuthControllerIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * The people-picker directory is the one /api/users route a non-admin may read (spec Module 5 §2
+     * — a coordinator has to be able to name the faculty lead). These three assertions pin the whole
+     * contract: faculty get in, student volunteers do not, and the payload stays narrow.
+     */
+    @Test
+    void userDirectoryIsReadableByProposalAuthorsButExposesOnlyNameAndRoles() throws Exception {
+        String facultyToken = login(FACULTY_EMAIL, FACULTY_PASSWORD).get("accessToken").asText();
+
+        MvcResult result = mockMvc.perform(get("/api/users/directory")
+                        .header("Authorization", "Bearer " + facultyToken)
+                        .param("role", "faculty"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode options = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertTrue(options.size() > 0, "the seeded faculty account should be listed");
+        for (JsonNode option : options) {
+            assertTrue(option.has("id") && option.has("name") && option.has("roles"));
+            assertFalse(option.has("active"), "account state must stay behind canManageUsers()");
+            assertFalse(option.has("lastLoginAt"), "account state must stay behind canManageUsers()");
+            assertFalse(option.has("mustChangePassword"), "account state must stay behind canManageUsers()");
+        }
+
+        // Student volunteers cannot author proposals, so they cannot browse people either.
+        String studentToken = login("student@cems.com", "Student123!").get("accessToken").asText();
+        mockMvc.perform(get("/api/users/directory").header("Authorization", "Bearer " + studentToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /** An unknown role filter yields no options rather than a 500 — a stale client must degrade. */
+    @Test
+    void userDirectoryReturnsEmptyForAnUnknownRole() throws Exception {
+        mockMvc.perform(get("/api/users/directory")
+                        .header("Authorization", "Bearer " + adminToken())
+                        .param("role", "not_a_role"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
     @Test
     void deactivatedUserCannotLogIn() throws Exception {
         String token = adminToken();

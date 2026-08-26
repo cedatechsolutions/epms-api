@@ -8,6 +8,7 @@ import com.cems.api.dto.UpdateProfileRequest;
 import com.cems.api.dto.UpdateUserRequest;
 import com.cems.api.dto.UpdateUserStatusRequest;
 import com.cems.api.dto.UserListQuery;
+import com.cems.api.dto.UserOptionResponse;
 import com.cems.api.dto.UserResponse;
 import com.cems.api.dto.UserStatsResponse;
 import com.cems.api.service.UserManagementService;
@@ -115,6 +116,19 @@ public class UserController {
     @GetMapping("/stats")
     public ResponseEntity<UserStatsResponse> getUserStats() {
         return ResponseEntity.ok(userManagementService.getUserStats());
+    }
+
+    /**
+     * Name-and-role directory backing people pickers, optionally filtered by {@code role}
+     * (spec Module 5 §2). Readable by any proposal author — see
+     * {@code Permissions.canBrowseUserDirectory()} for why this is wider than the rest of this
+     * controller, and {@link com.cems.api.dto.UserOptionResponse} for what bounds the exposure.
+     */
+    @PreAuthorize("@permissions.canBrowseUserDirectory()")
+    @GetMapping("/directory")
+    public ResponseEntity<List<UserOptionResponse>> getUserDirectory(
+            @RequestParam(value = "role", required = false) String role) {
+        return ResponseEntity.ok(userManagementService.getDirectory(role));
     }
 
     @PreAuthorize("@permissions.canManageUsers()")

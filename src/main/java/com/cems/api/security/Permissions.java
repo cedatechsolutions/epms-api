@@ -28,6 +28,20 @@ public class Permissions {
         return hasRole(RoleName.ADMIN);
     }
 
+    /**
+     * Read the name-and-role directory that fills people pickers — currently the proposal form's
+     * faculty-lead select.
+     *
+     * <p>Intentionally wider than {@link #canManageUsers()} and matched to
+     * {@link #canCreatePrograms()}: a coordinator drafting a proposal on a colleague's behalf has to
+     * be able to name them, and they are not administrators. The exposure is bounded by the DTO, not
+     * by this check — {@code UserOptionResponse} carries name, email and roles and nothing else,
+     * while full user records stay behind {@code canManageUsers()}.
+     */
+    public boolean canBrowseUserDirectory() {
+        return canCreatePrograms();
+    }
+
     // --- Module 2: community profiling (spec §2.2) ---
 
     /** Any authenticated user may view communities and sectors (matrix: view for all roles). */
@@ -138,6 +152,35 @@ public class Permissions {
                 RoleName.CAMPUS_ADMIN);
     }
 
+    // --- Module 5b: activities, attendance, evaluations (spec §2.2) ---
+
+    /**
+     * Record delivery — add activities, encode attendance, encode evaluations.
+     *
+     * <p>Same role set as {@link #canCreatePrograms()}, and narrowed further per-program by
+     * {@code ProgramAccessPolicy}: the caller must also own the program (created it or leads it) and
+     * the program must be approved or ongoing. Student volunteers are excluded here — spec §2.2 has
+     * them viewing the programs they help run, not writing the beneficiary record.
+     */
+    public boolean canRecordDelivery() {
+        return canCreatePrograms();
+    }
+
+    /**
+     * See beneficiary <em>names</em>, as opposed to the counts everyone with program access gets.
+     *
+     * <p><strong>This answers open question #1 in IMPLEMENTATION_PLAN.md §4 with its documented
+     * default: student volunteers see masked counts, not names.</strong> Attendance is personal data
+     * under RA 10173 and a volunteer needs the totals to run a session, not the roster — so the
+     * safer reading is the default until the Extension Services Center rules otherwise. Flipping it
+     * is a one-line change here plus a line in the plan's open-questions table; nothing else in the
+     * codebase re-derives this rule, because {@code AttendanceService} nulls the name server-side
+     * rather than letting clients hide a value they were still sent.
+     */
+    public boolean canViewBeneficiaryNames() {
+        return isAuthenticated() && !hasRole(RoleName.STUDENT_VOLUNTEER);
+    }
+
     // --- Module 6: dashboard ---
 
     /**
@@ -148,6 +191,32 @@ public class Permissions {
      */
     public boolean canViewDashboard() {
         return isAuthenticated();
+    }
+
+    /**
+     * The academic-period calendar. Open to everyone authenticated: it is a list of semester labels
+     * and dates, holding no program, person or community data of its own. Faculty need it to filter
+     * their own proposal list by term even though they cannot open the M&amp;E dashboard.
+     */
+    public boolean canViewAcademicPeriods() {
+        return isAuthenticated();
+    }
+
+    /**
+     * The M&amp;E dashboard (spec Module 6: "aggregate view ... for coordinators and administrators").
+     *
+     * <p>Deliberately narrower than {@link #canViewDashboard()}, which stays open to everyone. That
+     * screen scopes its proposal counts to the caller; this one cannot — a campus-wide beneficiary
+     * total is only meaningful unscoped. The decisive part is the program completion table: it names
+     * programs, and a faculty member reading it would see rows that {@code ProgramAccessPolicy} then
+     * refuses to open. Rather than render a table half of whose links 404, the whole M&amp;E payload
+     * is withheld and the client keeps showing them their personal overview.
+     */
+    public boolean canViewMonitoringDashboard() {
+        return hasAnyRole(RoleName.ADMIN,
+                RoleName.CAMPUS_ADMIN,
+                RoleName.CAMPUS_EXTENSION_COORDINATOR,
+                RoleName.EXTENSION_COORDINATOR);
     }
 
     // --- shared helpers (used by the checks above and by future module policies) ---

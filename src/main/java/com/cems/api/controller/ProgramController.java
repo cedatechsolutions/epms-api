@@ -5,11 +5,14 @@ import com.cems.api.dto.PaginatedResponse;
 import com.cems.api.dto.ProgramApprovalResponse;
 import com.cems.api.dto.ProgramDocumentResponse;
 import com.cems.api.dto.ProgramListQuery;
+import com.cems.api.dto.ProgramMemberRequest;
+import com.cems.api.dto.ProgramMemberResponse;
 import com.cems.api.dto.ProgramRequest;
 import com.cems.api.dto.ProgramResponse;
 import com.cems.api.dto.ProgramStageActionRequest;
 import com.cems.api.dto.ProgramStatsResponse;
 import com.cems.api.dto.ProgramSummaryResponse;
+import com.cems.api.service.ProgramMemberService;
 import com.cems.api.service.ProgramService;
 import com.cems.api.service.ProgramService.DocumentDownload;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,9 +47,12 @@ import java.util.List;
 public class ProgramController {
 
     private final ProgramService programService;
+    private final ProgramMemberService programMemberService;
 
-    public ProgramController(ProgramService programService) {
+    public ProgramController(ProgramService programService,
+            ProgramMemberService programMemberService) {
         this.programService = programService;
+        this.programMemberService = programMemberService;
     }
 
     // --- reads ---
@@ -61,9 +67,14 @@ public class ProgramController {
     }
 
     @PreAuthorize("@permissions.canViewPrograms()")
+    /**
+     * @param periodId must match the {@code periodId} the list was fetched with, so the tab badges
+     *                 count the same programs the rows show. Omitted means all periods.
+     */
     @GetMapping("/stats")
-    public ResponseEntity<ProgramStatsResponse> stats() {
-        return ResponseEntity.ok(programService.getStats());
+    public ResponseEntity<ProgramStatsResponse> stats(
+            @RequestParam(name = "periodId", required = false) String periodId) {
+        return ResponseEntity.ok(programService.getStats(periodId));
     }
 
     @PreAuthorize("@permissions.canViewPrograms()")
@@ -131,6 +142,29 @@ public class ProgramController {
     public ResponseEntity<ProgramResponse> approve(@PathVariable String id,
             @RequestBody(required = false) ProgramStageActionRequest request) {
         return ResponseEntity.ok(programService.approve(id, request));
+    }
+
+    // --- team assignment (spec Module 5 §1 "own + assigned") ---
+
+    @PreAuthorize("@permissions.canViewPrograms()")
+    @GetMapping("/{id}/members")
+    public ResponseEntity<List<ProgramMemberResponse>> listMembers(@PathVariable String id) {
+        return ResponseEntity.ok(programMemberService.list(id));
+    }
+
+    @PreAuthorize("@permissions.canCreatePrograms()")
+    @PostMapping("/{id}/members")
+    public ResponseEntity<ProgramMemberResponse> addMember(@PathVariable String id,
+            @Valid @RequestBody ProgramMemberRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(programMemberService.add(id, request));
+    }
+
+    @PreAuthorize("@permissions.canCreatePrograms()")
+    @DeleteMapping("/{id}/members/{memberId}")
+    public ResponseEntity<ApiResponse> removeMember(@PathVariable String id,
+            @PathVariable String memberId) {
+        programMemberService.remove(id, memberId);
+        return ResponseEntity.ok(new ApiResponse("Assignment removed."));
     }
 
     // --- documents ---

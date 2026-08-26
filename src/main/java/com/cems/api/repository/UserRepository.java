@@ -23,4 +23,7 @@ public interface UserRepository extends JpaRepository<User, String>, JpaSpecific
 
     /** Active holders of a role, used to fill report signatory blocks (spec Module 3 §5). */
     List<User> findByRoles_NameAndActiveTrueAndDeletedAtIsNull(String roleName);
+
+    /** Every account that can still be named in a workflow, for people pickers (spec Module 5 §2). */
+    List<User> findByActiveTrueAndDeletedAtIsNull(Sort sort);
 }

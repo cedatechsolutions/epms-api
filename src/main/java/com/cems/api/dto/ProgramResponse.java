@@ -15,6 +15,10 @@ import java.util.List;
  * frontend must render from it rather than re-deriving the state machine, so the two can never
  * disagree. {@code canEdit} likewise reflects the server's ownership + status rules.
  *
+ * <p>{@code canRecordDelivery} is the delivery-phase counterpart of {@code canEdit}: true only when
+ * the caller owns the program AND it is approved or ongoing. The two are never both true — a
+ * proposal is editable before submission, and deliverable after approval.
+ *
  * <p>{@code warnings} carries non-blocking notices, currently the "no needs assessment linked"
  * caution raised when a proposal is submitted without a survey or assessment report.
  */
@@ -46,6 +50,7 @@ public record ProgramResponse(
         List<ProgramApprovalResponse> approvals,
         List<String> availableActions,
         boolean canEdit,
+        boolean canRecordDelivery,
         List<String> warnings) {
 
     public static ProgramResponse fromEntity(Program program,
@@ -54,6 +59,7 @@ public record ProgramResponse(
             List<ProgramApprovalResponse> approvals,
             List<String> availableActions,
             boolean canEdit,
+            boolean canRecordDelivery,
             List<String> warnings) {
         return new ProgramResponse(
                 program.getId(),
@@ -86,6 +92,7 @@ public record ProgramResponse(
                 approvals,
                 availableActions,
                 canEdit,
+                canRecordDelivery,
                 warnings);
     }
 }

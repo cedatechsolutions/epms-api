@@ -20,6 +20,12 @@ public class ProgramListQuery {
     private String communityId;
     private String programTypeId;
     private String facultyLeadId;
+    /**
+     * Academic period to scope the list to (spec Module 6 AC 6). This is what makes every dashboard
+     * KPI clickable: the dashboard and this list apply the same rule — proposed date inside the
+     * period — so the count on the card equals the row count on the screen it opens.
+     */
+    private String periodId;
     private String sort = "createdAt";
     private String direction = "desc";
 
@@ -77,6 +83,14 @@ public class ProgramListQuery {
 
     public void setFacultyLeadId(String facultyLeadId) {
         this.facultyLeadId = facultyLeadId;
+    }
+
+    public String getPeriodId() {
+        return periodId;
+    }
+
+    public void setPeriodId(String periodId) {
+        this.periodId = periodId;
     }
 
     public String getSort() {

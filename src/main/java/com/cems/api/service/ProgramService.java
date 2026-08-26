@@ -8,6 +8,7 @@ import com.cems.api.dto.ProgramResponse;
 import com.cems.api.dto.ProgramStageActionRequest;
 import com.cems.api.dto.ProgramStatsResponse;
 import com.cems.api.dto.ProgramSummaryResponse;
+import com.cems.api.entity.AcademicPeriod;
 import com.cems.api.entity.Community;
 import com.cems.api.entity.Program;
 import com.cems.api.entity.ProgramApproval;
@@ -19,6 +20,7 @@ import com.cems.api.entity.User;
 import com.cems.api.repository.CommunityRepository;
 import com.cems.api.repository.ProgramApprovalRepository;
 import com.cems.api.repository.ProgramDocumentRepository;
+import com.cems.api.repository.ProgramMemberRepository;
 import com.cems.api.repository.ProgramRepository;
 import com.cems.api.repository.ProgramTypeRepository;
 import com.cems.api.repository.SectorRepository;
@@ -30,6 +32,7 @@ import com.cems.api.service.ProgramStateMachine.Action;
 import com.cems.api.service.ProgramStateMachine.TransitionResult;
 import com.cems.api.storage.StorageService;
 import com.cems.api.storage.StoredFile;
+import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
@@ -45,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -92,6 +96,9 @@ public class ProgramService {
     private final ActivityLogService activityLogService;
     private final ProgramStateMachine stateMachine;
     private final Permissions permissions;
+    private final ProgramAccessPolicy accessPolicy;
+    private final ProgramMemberRepository memberRepository;
+    private final AcademicPeriodService academicPeriodService;
 
     public ProgramService(ProgramRepository programRepository,
             ProgramApprovalRepository approvalRepository,
@@ -104,7 +111,10 @@ public class ProgramService {
             StorageService storageService,
             ActivityLogService activityLogService,
             ProgramStateMachine stateMachine,
-            Permissions permissions) {
+            Permissions permissions,
+            ProgramAccessPolicy accessPolicy,
+            ProgramMemberRepository memberRepository,
+            AcademicPeriodService academicPeriodService) {
         this.programRepository = programRepository;
         this.approvalRepository = approvalRepository;
         this.documentRepository = documentRepository;
@@ -117,6 +127,9 @@ public class ProgramService {
         this.activityLogService = activityLogService;
         this.stateMachine = stateMachine;
         this.permissions = permissions;
+        this.accessPolicy = accessPolicy;
+        this.memberRepository = memberRepository;
+        this.academicPeriodService = academicPeriodService;
     }
 
     // --- reads ---
@@ -126,7 +139,12 @@ public class ProgramService {
         int page = Math.max(0, query.getPage() - 1);
         int pageSize = Math.min(100, Math.max(1, query.getPerPage()));
         Sort sort = resolveSort(query.getSort(), query.getDirection());
-        Specification<Program> specification = buildSpecification(query);
+        // Resolved once, here, rather than inside the specification lambda: that lambda runs on both
+        // the count query and the data query, and again on the out-of-range retry below, so looking
+        // the period up inside it would repeat the same read up to three times per list call. It
+        // also means an unknown period id raises its 404 before any program query is built.
+        Specification<Program> specification = buildSpecification(
+                query, academicPeriodService.resolveRequested(query.getPeriodId()).orElse(null));
         Pageable pageable = PageRequest.of(page, pageSize, sort);
 
         Page<Program> programs = programRepository.findAll(specification, pageable);
@@ -141,12 +159,32 @@ public class ProgramService {
                 ProgramSummaryResponse.fromEntity(program, names.get(program.getFacultyLeadId())));
     }
 
+    /**
+     * Status counts for the list screen's tab badges.
+     *
+     * @param periodId scopes the counts exactly as {@link #list} scopes its rows. Pass the same
+     *                 value the list was called with, or the badges will describe a different set of
+     *                 programs than the ones on screen.
+     */
     @Transactional(readOnly = true)
-    public ProgramStatsResponse getStats() {
-        // Faculty/student counts are scoped to their own proposals, matching what the list shows.
+    public ProgramStatsResponse getStats(String periodId) {
+        // Faculty/student counts are scoped exactly as the list is — created, led, or assigned —
+        // so the tab badges can never disagree with the rows they sit above. The sentinel keeps the
+        // IN clause valid when the user is assigned to nothing; no program id is ever an empty string.
         String ownerId = restrictedToOwnPrograms() ? resolveCurrentUserId() : null;
+        List<String> assignedIds = ownerId == null
+                ? List.of("")
+                : memberRepository.findProgramIdsByUserId(ownerId);
+        if (assignedIds.isEmpty()) {
+            assignedIds = List.of("");
+        }
+        AcademicPeriod period = academicPeriodService.resolveRequested(periodId).orElse(null);
+        LocalDate startsOn = period == null ? null : period.getStartsOn();
+        LocalDate endsOn = period == null ? null : period.getEndsOn();
+
         Map<String, Long> counts = new HashMap<>();
-        for (Object[] row : programRepository.countByStatusForOwner(ownerId)) {
+        for (Object[] row : programRepository.countByStatusForOwner(
+                ownerId, assignedIds, startsOn, endsOn)) {
             counts.put((String) row[0], (Long) row[1]);
         }
         long underReview = UNDER_REVIEW_STATUSES.stream().mapToLong(s -> counts.getOrDefault(s, 0L)).sum();
@@ -479,6 +517,7 @@ public class ProgramService {
                 loadApprovals(program.getId()),
                 availableActionsFor(program),
                 canEditQuietly(program),
+                accessPolicy.canDeliverQuietly(program),
                 computeWarnings(program));
     }
 
@@ -546,33 +585,27 @@ public class ProgramService {
         return (isOwner(program) || isCoordinatorOrAdmin()) && program.isEditableByOwner();
     }
 
+    // The visibility rules below live in ProgramAccessPolicy so the delivery phase (activities,
+    // attendance, evaluations) shares one definition of "owner" and "restricted to their own".
+    // Only the proposal-phase STATUS rule stays here — see assertCanEdit above, and the policy's
+    // class javadoc for why the two phases are deliberately opposite.
+
     /** Faculty/volunteers may only view their own proposals; a foreign one looks not-found (no leak). */
     private void assertCanView(Program program) {
-        if (!restrictedToOwnPrograms()) {
-            return;
-        }
-        if (!isOwner(program)) {
-            throw new NoSuchElementException("Program not found.");
-        }
+        accessPolicy.assertCanView(program);
     }
 
     private boolean isOwner(Program program) {
-        String userId = resolveCurrentUserId();
-        return userId != null
-                && (userId.equals(program.getCreatedBy()) || userId.equals(program.getFacultyLeadId()));
+        return accessPolicy.isOwner(program);
     }
 
     private boolean isCoordinatorOrAdmin() {
-        return permissions.hasAnyRole(RoleName.ADMIN,
-                RoleName.CAMPUS_EXTENSION_COORDINATOR,
-                RoleName.EXTENSION_COORDINATOR);
+        return accessPolicy.isCoordinatorOrAdmin();
     }
 
     /** Faculty and student volunteers see only what they created or lead (spec Module 5 §1). */
     private boolean restrictedToOwnPrograms() {
-        return permissions.hasAnyRole(RoleName.FACULTY, RoleName.STUDENT_VOLUNTEER)
-                && !isCoordinatorOrAdmin()
-                && !permissions.hasRole(RoleName.CAMPUS_ADMIN);
+        return accessPolicy.restrictedToOwnPrograms();
     }
 
     /** The role recorded on a stage-1 audit row: the submitter is acting as project leader. */
@@ -668,14 +701,10 @@ public class ProgramService {
     }
 
     private String resolveCurrentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated()) {
-            return null;
-        }
-        return userRepository.findByEmail(auth.getName()).map(User::getId).orElse(null);
+        return accessPolicy.currentUserId();
     }
 
-    private Specification<Program> buildSpecification(ProgramListQuery query) {
+    private Specification<Program> buildSpecification(ProgramListQuery query, AcademicPeriod period) {
         return (root, criteriaQuery, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.isNull(root.get("deletedAt")));
@@ -703,12 +732,29 @@ public class ProgramService {
             if (isPresent(query.getFacultyLeadId())) {
                 predicates.add(cb.equal(root.get("facultyLeadId"), query.getFacultyLeadId().trim()));
             }
-            // Faculty and student volunteers see only what they created or lead (spec Module 5 §1).
+            // Academic period (spec Module 6 AC 6: every dashboard count must open the list behind
+            // it). This clause must stay identical to the one the dashboard aggregates use in
+            // ProgramRepository — a program belongs to a period when its proposed date falls in it,
+            // and a program without a proposed date belongs to no period. If these two ever diverge,
+            // a KPI reading 12 opens a list of 11 and the whole screen loses its credibility.
+            if (period != null) {
+                Path<LocalDate> proposedDate = root.get("proposedDate");
+                predicates.add(cb.isNotNull(proposedDate));
+                predicates.add(cb.between(proposedDate, period.getStartsOn(), period.getEndsOn()));
+            }
+            // Faculty and student volunteers see what they created, lead, or are assigned to
+            // (spec Module 5 §1 "own + assigned"). The assigned ids are fetched once and folded in
+            // as an IN clause rather than correlated per row.
             if (restrictedToOwnPrograms()) {
                 String userId = resolveCurrentUserId();
-                predicates.add(cb.or(
-                        cb.equal(root.get("createdBy"), userId),
-                        cb.equal(root.get("facultyLeadId"), userId)));
+                List<Predicate> visibility = new ArrayList<>();
+                visibility.add(cb.equal(root.get("createdBy"), userId));
+                visibility.add(cb.equal(root.get("facultyLeadId"), userId));
+                List<String> assignedIds = memberRepository.findProgramIdsByUserId(userId);
+                if (!assignedIds.isEmpty()) {
+                    visibility.add(root.get("id").in(assignedIds));
+                }
+                predicates.add(cb.or(visibility.toArray(Predicate[]::new)));
             }
             return cb.and(predicates.toArray(Predicate[]::new));
         };

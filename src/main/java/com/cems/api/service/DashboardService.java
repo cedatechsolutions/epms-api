@@ -78,7 +78,9 @@ public class DashboardService {
                 communityOverview(),
                 assessmentOverview(),
                 recommendationOverview(),
-                programService.getStats(),
+                // The personal landing overview is not period-scoped: it answers "what is on my
+                // plate", which does not end when a semester does.
+                programService.getStats(null),
                 topNeeds(),
                 permissions.canViewActivityLogs() ? activityLogService.recent(RECENT_ACTIVITY_LIMIT) : null,
                 Instant.now());
