@@ -183,8 +183,9 @@ public class ProgramService {
         LocalDate endsOn = period == null ? null : period.getEndsOn();
 
         Map<String, Long> counts = new HashMap<>();
-        for (Object[] row : programRepository.countByStatusForOwner(
-                ownerId, assignedIds, startsOn, endsOn)) {
+        for (Object[] row : (startsOn == null
+                ? programRepository.countByStatusForOwner(ownerId, assignedIds)
+                : programRepository.countByStatusForOwnerAndPeriod(ownerId, assignedIds, startsOn, endsOn))) {
             counts.put((String) row[0], (Long) row[1]);
         }
         long underReview = UNDER_REVIEW_STATUSES.stream().mapToLong(s -> counts.getOrDefault(s, 0L)).sum();

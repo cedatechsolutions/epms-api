@@ -56,6 +56,19 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
     // cannot leave phantom beneficiaries in the campus total.
 
     /**
+     * Beneficiaries sex-disaggregated across all periods. Used when no period filter is active.
+     * See {@link #countBySexForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT r.sex, COUNT(r)
+            FROM AttendanceRecord r
+            WHERE r.programActivity.deletedAt IS NULL
+              AND r.programActivity.program.deletedAt IS NULL
+            GROUP BY r.sex
+            """)
+    List<Object[]> countBySex();
+
+    /**
      * "Beneficiaries reached", sex-disaggregated. Returns rows of {@code [sex, count]}.
      *
      * <p>These are raw attendance rows: one person at three sessions counts three times. That is the
@@ -67,13 +80,26 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
             FROM AttendanceRecord r
             WHERE r.programActivity.deletedAt IS NULL
               AND r.programActivity.program.deletedAt IS NULL
-              AND (:startsOn IS NULL
-                   OR (r.programActivity.program.proposedDate IS NOT NULL
-                       AND r.programActivity.program.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND r.programActivity.program.proposedDate IS NOT NULL
+              AND r.programActivity.program.proposedDate BETWEEN :startsOn AND :endsOn
             GROUP BY r.sex
             """)
     List<Object[]> countBySexForPeriod(@Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
+
+    /**
+     * Beneficiaries by sector across all periods. Used when no period filter is active.
+     * See {@link #countBySectorAndSexForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT s.id, s.name, r.sex, COUNT(r)
+            FROM AttendanceRecord r
+            LEFT JOIN r.sector s
+            WHERE r.programActivity.deletedAt IS NULL
+              AND r.programActivity.program.deletedAt IS NULL
+            GROUP BY s.id, s.name, r.sex
+            """)
+    List<Object[]> countBySectorAndSex();
 
     /**
      * The "beneficiaries by sector" chart, disaggregated (cross-cutting rule 1: every count surface
@@ -89,9 +115,8 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
             LEFT JOIN r.sector s
             WHERE r.programActivity.deletedAt IS NULL
               AND r.programActivity.program.deletedAt IS NULL
-              AND (:startsOn IS NULL
-                   OR (r.programActivity.program.proposedDate IS NOT NULL
-                       AND r.programActivity.program.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND r.programActivity.program.proposedDate IS NOT NULL
+              AND r.programActivity.program.proposedDate BETWEEN :startsOn AND :endsOn
             GROUP BY s.id, s.name, r.sex
             """)
     List<Object[]> countBySectorAndSexForPeriod(@Param("startsOn") LocalDate startsOn,

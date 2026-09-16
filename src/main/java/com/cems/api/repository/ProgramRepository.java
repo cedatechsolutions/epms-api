@@ -65,26 +65,49 @@ public interface ProgramRepository
                    OR p.createdBy = :ownerId
                    OR p.facultyLeadId = :ownerId
                    OR p.id IN :assignedIds)
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
             GROUP BY p.status
             """)
     List<Object[]> countByStatusForOwner(@Param("ownerId") String ownerId,
+            @Param("assignedIds") Collection<String> assignedIds);
+
+    @Query("""
+            SELECT p.status, COUNT(p)
+            FROM Program p
+            WHERE p.deletedAt IS NULL
+              AND (:ownerId IS NULL
+                   OR p.createdBy = :ownerId
+                   OR p.facultyLeadId = :ownerId
+                   OR p.id IN :assignedIds)
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
+            GROUP BY p.status
+            """)
+    List<Object[]> countByStatusForOwnerAndPeriod(@Param("ownerId") String ownerId,
             @Param("assignedIds") Collection<String> assignedIds,
             @Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
 
     // --- M&E dashboard aggregates (spec Module 6) -------------------------------------------
     //
-    // Every query below shares one period clause:
-    //
-    //     :startsOn IS NULL  ->  all periods, including programs with no proposed date
-    //     otherwise          ->  proposed_date BETWEEN :startsOn AND :endsOn
+    // Each aggregate has two variants: one for "all periods" (no date filter) and one for a
+    // specific period (proposed_date BETWEEN :startsOn AND :endsOn). The service layer
+    // dispatches based on whether startsOn is null.
     //
     // It is repeated verbatim rather than factored into a Specification because these are grouped
     // aggregates, not row fetches, and because the programs list applies the SAME rule through its
     // Specification — if the two ever have to change, they must change together and a reader has to
     // be able to see both. See the V12 migration header for why the anchor is proposed_date alone.
+
+    /**
+     * Status counts across all periods. Used when no period filter is active.
+     * See {@link #countByStatusForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT p.status, COUNT(p)
+            FROM Program p
+            WHERE p.deletedAt IS NULL
+            GROUP BY p.status
+            """)
+    List<Object[]> countByStatus();
 
     /**
      * Status counts for the selected period. Returns rows of {@code [status, count]} — the source of
@@ -94,12 +117,25 @@ public interface ProgramRepository
             SELECT p.status, COUNT(p)
             FROM Program p
             WHERE p.deletedAt IS NULL
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
             GROUP BY p.status
             """)
     List<Object[]> countByStatusForPeriod(@Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
+
+    /**
+     * Programs by type across all periods. Used when no period filter is active.
+     * See {@link #countByProgramTypeForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT t.id, t.name, COUNT(p)
+            FROM Program p
+            JOIN p.programType t
+            WHERE p.deletedAt IS NULL
+            GROUP BY t.id, t.name
+            ORDER BY COUNT(p) DESC, t.name ASC
+            """)
+    List<Object[]> countByProgramType();
 
     /**
      * The "programs by type" chart. Returns rows of {@code [programTypeId, programTypeName, count]},
@@ -111,13 +147,26 @@ public interface ProgramRepository
             FROM Program p
             JOIN p.programType t
             WHERE p.deletedAt IS NULL
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
             GROUP BY t.id, t.name
             ORDER BY COUNT(p) DESC, t.name ASC
             """)
     List<Object[]> countByProgramTypeForPeriod(@Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
+
+    /**
+     * Communities served across all periods. Used when no period filter is active.
+     * See {@link #countCommunitiesServedForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT COUNT(DISTINCT p.community.id)
+            FROM Program p
+            WHERE p.deletedAt IS NULL
+              AND p.community IS NOT NULL
+              AND EXISTS (SELECT 1 FROM ProgramActivity a
+                          WHERE a.program = p AND a.deletedAt IS NULL AND a.status = 'done')
+            """)
+    long countCommunitiesServed();
 
     /**
      * "Communities served" — distinct communities with at least one activity actually delivered
@@ -129,13 +178,25 @@ public interface ProgramRepository
             FROM Program p
             WHERE p.deletedAt IS NULL
               AND p.community IS NOT NULL
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
               AND EXISTS (SELECT 1 FROM ProgramActivity a
                           WHERE a.program = p AND a.deletedAt IS NULL AND a.status = 'done')
             """)
     long countCommunitiesServedForPeriod(@Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
+
+    /**
+     * Faculty involved across all periods. Used when no period filter is active.
+     * See {@link #countFacultyInvolvedForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT COUNT(DISTINCT p.facultyLeadId)
+            FROM Program p
+            WHERE p.deletedAt IS NULL
+              AND p.facultyLeadId IS NOT NULL
+              AND p.status IN ('approved', 'ongoing', 'completed')
+            """)
+    long countFacultyInvolved();
 
     /**
      * "Faculty involved" — distinct faculty leads on programs that reached approval (spec Module 6
@@ -148,11 +209,24 @@ public interface ProgramRepository
             WHERE p.deletedAt IS NULL
               AND p.facultyLeadId IS NOT NULL
               AND p.status IN ('approved', 'ongoing', 'completed')
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
             """)
     long countFacultyInvolvedForPeriod(@Param("startsOn") LocalDate startsOn,
             @Param("endsOn") LocalDate endsOn);
+
+    /**
+     * All programs for the completion table across all periods. Used when no period filter is active.
+     * See {@link #findForPeriod} for the period-scoped variant.
+     */
+    @Query("""
+            SELECT p
+            FROM Program p
+            LEFT JOIN FETCH p.community
+            LEFT JOIN FETCH p.programType
+            WHERE p.deletedAt IS NULL
+            ORDER BY p.proposedDate DESC NULLS LAST, p.title ASC
+            """)
+    List<Program> findAllForCompletion(Pageable pageable);
 
     /**
      * The programs behind the completion table, newest proposed date first. Fetches community and
@@ -165,8 +239,7 @@ public interface ProgramRepository
             LEFT JOIN FETCH p.community
             LEFT JOIN FETCH p.programType
             WHERE p.deletedAt IS NULL
-              AND (:startsOn IS NULL
-                   OR (p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn))
+              AND p.proposedDate IS NOT NULL AND p.proposedDate BETWEEN :startsOn AND :endsOn
             ORDER BY p.proposedDate DESC NULLS LAST, p.title ASC
             """)
     List<Program> findForPeriod(@Param("startsOn") LocalDate startsOn,

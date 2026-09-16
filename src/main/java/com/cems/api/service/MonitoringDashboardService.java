@@ -97,21 +97,29 @@ public class MonitoringDashboardService {
         LocalDate endsOn = period.map(AcademicPeriod::getEndsOn).orElse(null);
 
         Map<String, Long> statusCounts = toCountMap(
-                programRepository.countByStatusForPeriod(startsOn, endsOn));
+                startsOn == null
+                        ? programRepository.countByStatus()
+                        : programRepository.countByStatusForPeriod(startsOn, endsOn));
         Map<String, Long> beneficiariesBySex = toCountMap(
-                attendanceRepository.countBySexForPeriod(startsOn, endsOn));
+                startsOn == null
+                        ? attendanceRepository.countBySex()
+                        : attendanceRepository.countBySexForPeriod(startsOn, endsOn));
 
         long female = beneficiariesBySex.getOrDefault(AttendanceRecord.SEX_FEMALE, 0L);
         long male = beneficiariesBySex.getOrDefault(AttendanceRecord.SEX_MALE, 0L);
 
         Kpis kpis = new Kpis(
-                programRepository.countCommunitiesServedForPeriod(startsOn, endsOn),
+                startsOn == null
+                        ? programRepository.countCommunitiesServed()
+                        : programRepository.countCommunitiesServedForPeriod(startsOn, endsOn),
                 statusCounts.values().stream().mapToLong(Long::longValue).sum(),
                 statusCounts.getOrDefault(Program.STATUS_COMPLETED, 0L),
                 female + male,
                 female,
                 male,
-                programRepository.countFacultyInvolvedForPeriod(startsOn, endsOn),
+                startsOn == null
+                        ? programRepository.countFacultyInvolved()
+                        : programRepository.countFacultyInvolvedForPeriod(startsOn, endsOn),
                 BENEFICIARY_METHOD);
 
         return new MonitoringDashboardResponse(
@@ -137,7 +145,9 @@ public class MonitoringDashboardService {
     }
 
     private List<TypeCount> programsByType(LocalDate startsOn, LocalDate endsOn) {
-        return programRepository.countByProgramTypeForPeriod(startsOn, endsOn).stream()
+        return (startsOn == null
+                ? programRepository.countByProgramType()
+                : programRepository.countByProgramTypeForPeriod(startsOn, endsOn)).stream()
                 .map(row -> new TypeCount((String) row[0], (String) row[1], asLong(row, 2)))
                 .toList();
     }
@@ -151,7 +161,9 @@ public class MonitoringDashboardService {
         record Tally(String name, long[] counts) {
         }
         Map<String, Tally> bySector = new LinkedHashMap<>();
-        for (Object[] row : attendanceRepository.countBySectorAndSexForPeriod(startsOn, endsOn)) {
+        for (Object[] row : (startsOn == null
+                ? attendanceRepository.countBySectorAndSex()
+                : attendanceRepository.countBySectorAndSexForPeriod(startsOn, endsOn))) {
             String sectorId = (String) row[0];
             String name = row[1] == null ? UNSPECIFIED_SECTOR : (String) row[1];
             // A null id is a valid map key here only because LinkedHashMap allows one; that single
@@ -185,8 +197,9 @@ public class MonitoringDashboardService {
      * Three queries total regardless of row count.
      */
     private List<CompletionRow> completionRows(LocalDate startsOn, LocalDate endsOn) {
-        List<Program> programs = programRepository.findForPeriod(
-                startsOn, endsOn, PageRequest.of(0, COMPLETION_ROW_LIMIT));
+        List<Program> programs = startsOn == null
+                ? programRepository.findAllForCompletion(PageRequest.of(0, COMPLETION_ROW_LIMIT))
+                : programRepository.findForPeriod(startsOn, endsOn, PageRequest.of(0, COMPLETION_ROW_LIMIT));
         if (programs.isEmpty()) {
             return List.of();
         }
